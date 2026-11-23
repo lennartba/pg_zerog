@@ -86,6 +86,61 @@ def _icp(src, T, tgt, tgt_tree, iters, keep, with_scale, rev=None, keep_rev=0.8)
     return T, err
 
 
+_PLY_TYPES = {"char": "i1", "int8": "i1", "uchar": "u1", "uint8": "u1", "short": "i2", "int16": "i2",
+              "ushort": "u2", "uint16": "u2", "int": "i4", "int32": "i4", "uint": "u4", "uint32": "u4",
+              "float": "f4", "float32": "f4", "double": "f8", "float64": "f8"}
+
+
+def read_point_ply(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    """xyz + rgb from a binary little-endian PLY point cloud.
+
+    OpenMVS's dense cloud has per-point list properties (view indices/weights) that
+    trimesh cannot read. Fixed-size properties first, then any lists, are assumed."""
+    with open(path, "rb") as fh:
+        head = b""
+        while not head.endswith(b"end_header\n"):
+            head += fh.readline()
+        data = fh.read()
+    lines = head.decode("ascii").splitlines()
+    if "binary_little_endian" not in lines[1]:
+        raise ValueError(f"{path}: only binary_little_endian supported")
+    n, fixed, lists, in_vertex = 0, [], [], False
+    for l in lines:
+        t = l.split()
+        if t[:2] == ["element", "vertex"]:
+            n, in_vertex = int(t[2]), True
+        elif t and t[0] == "element":
+            in_vertex = False
+        elif in_vertex and t[:2] == ["property", "list"]:
+            lists.append((_PLY_TYPES[t[2]], _PLY_TYPES[t[3]]))
+        elif in_vertex and t and t[0] == "property":
+            if lists:
+                raise ValueError("fixed property after list property")
+            fixed.append((t[2], "<" + _PLY_TYPES[t[1]]))
+    dt = np.dtype(fixed)
+    if not lists:
+        rec = np.frombuffer(data, dt, count=n)
+    else:
+        # variable record length: walk the list counts once, then gather fixed parts
+        buf = np.frombuffer(data, np.uint8)
+        offs = np.empty(n, np.int64)
+        pos = 0
+        sizes = [(np.dtype(c).itemsize, np.dtype(v).itemsize) for c, v in lists]
+        if any(cs != 1 for cs, _ in sizes):
+            raise ValueError("only uint8 list counts supported")
+        fs = dt.itemsize
+        for i in range(n):
+            offs[i] = pos
+            pos += fs
+            for _, vs in sizes:
+                pos += 1 + int(buf[pos]) * vs
+        idx = offs[:, None] + np.arange(fs)[None, :]
+        rec = buf[idx].copy().view(dt).reshape(n)
+    xyz = np.stack([rec["x"], rec["y"], rec["z"]], 1).astype(float)
+    rgb = np.stack([rec["red"], rec["green"], rec["blue"]], 1).astype(np.uint8)
+    return xyz, rgb
+
+
 def segment_prop(points: np.ndarray, colors: np.ndarray, cfg: dict) -> np.ndarray:
     """Indices of the prop: base-coat coloured points, largest connected cluster."""
     sc = cfg["segment"]
@@ -117,11 +172,7 @@ def align_to_stl(dense_ply: Path, mesh_ply: Path, stl: Path, work: Path, cfg: di
     if out.exists():
         return np.array(json.loads(out.read_text())["scan_to_stl"])
 
-    cloud = trimesh.load(dense_ply, process=False)
-    pts = np.asarray(cloud.vertices, float)
-    cols = np.asarray(cloud.colors) if getattr(cloud, "colors", None) is not None and len(cloud.colors) else None
-    if cols is None:
-        raise RuntimeError(f"{dense_ply} has no colours")
+    pts, cols = read_point_ply(dense_ply)
     prop = pts[segment_prop(pts, cols, cfg)]
     src = prop[RNG.choice(len(prop), min(8000, len(prop)), replace=False)]
 
