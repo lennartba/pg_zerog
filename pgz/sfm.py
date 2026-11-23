@@ -92,26 +92,44 @@ def run_colmap(scan: Scan, work: Path, cfg: dict) -> Path:
              "--database_path", db, "--image_path", work / "images_feat",
              "--output_path", sparse,
              "--Mapper.num_threads", threads,
+             "--Mapper.random_seed", str(s["random_seed"]),
              *[a for k, v in s["mapper"].items() for a in (f"--Mapper.{k}", str(v))],
              ], logs / "colmap_mapper.log")
 
-    # choose the model with the most registered images, export as text
-    best, best_n = None, -1
-    for d in sorted(p for p in sparse.iterdir() if p.is_dir()):
-        txt = work / "sparse_txt" / d.name
+    # choose the model with the most registered images
+    def n_images(model_dir: Path) -> int:
+        txt = work / "sparse_txt" / model_dir.name
         if not (txt / "images.txt").exists():
             txt.mkdir(parents=True, exist_ok=True)
-            run([colmap, "model_converter", "--input_path", d, "--output_path", txt,
+            run([colmap, "model_converter", "--input_path", model_dir, "--output_path", txt,
                  "--output_type", "TXT"], logs / "colmap_convert.log")
-        n = len(read_images_txt(txt / "images.txt"))
-        if n > best_n:
-            best, best_n = txt, n
-    if best is None:
+        return len(read_images_txt(txt / "images.txt"))
+
+    models = sorted(p for p in sparse.iterdir() if p.is_dir())
+    if not models:
         raise RuntimeError("COLMAP produced no model")
-    log.info("  model %s: %d of %d images registered", best.name, best_n, len(scan.views))
-    if best_n < len(scan.views):
-        log.warning("  %d images NOT registered", len(scan.views) - best_n)
-    return best
+    best = max(models, key=n_images)
+    log.info("  mapper: largest model %d of %d images", n_images(best), len(scan.views))
+
+    # The mapper splits into sub-models when a few images register late. Register the
+    # rest into the largest model (relaxed thresholds), then bundle-adjust everything.
+    final = work / "sparse_final"
+    if not (final / "ba").exists() or not any((final / "ba").iterdir()):
+        (final / "reg").mkdir(parents=True, exist_ok=True)
+        (final / "ba").mkdir(parents=True, exist_ok=True)
+        run([colmap, "image_registrator", "--database_path", db,
+             "--input_path", best, "--output_path", final / "reg",
+             *[a for k, v in s["mapper"].items() if k.startswith("abs_pose")
+               for a in (f"--Mapper.{k}", str(v))]], logs / "colmap_register.log")
+        run([colmap, "bundle_adjuster", "--input_path", final / "reg",
+             "--output_path", final / "ba",
+             "--BundleAdjustment.refine_principal_point", str(s["mapper"]["ba_refine_principal_point"]),
+             ], logs / "colmap_ba.log")
+    n = n_images(final / "ba")
+    log.info("  final model: %d of %d images registered", n, len(scan.views))
+    if n < len(scan.views):
+        log.warning("  %d images NOT registered", len(scan.views) - n)
+    return work / "sparse_txt" / "ba"
 
 
 # --- COLMAP text model I/O -------------------------------------------------

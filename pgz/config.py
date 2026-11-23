@@ -35,6 +35,7 @@ DEFAULTS: dict = {
             "min_model_size": 5,
             "ba_refine_principal_point": 0,
         },
+        "random_seed": 1,  # fixed: reproducible mapper runs
         "neighbors": 30,  # matching pairs from the scanner's pose prior
         "max_angle_deg": 40.0,
     },
