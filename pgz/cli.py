@@ -68,6 +68,9 @@ def cmd_run(args) -> int:
         source = cfg["mesh"]["source"] if stl else "scan"
         if stl:
             tf = align.align_to_stl(mvs_dir / "scene_dense.ply", raw_mesh, stl, work, cfg)
+            if cfg["silhouette"]["enabled"]:
+                from . import silhouette
+                tf = silhouette.measure_and_refine(dense_dir, stl, tf, work, cfg)
         if source == "stl":
             mesh_in = align.stl_to_scan_frame(stl, tf, mvs_dir / "stl_in_scan.ply",
                                               cfg["mesh"]["stl_max_edge_mm"])

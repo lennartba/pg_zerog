@@ -165,13 +165,22 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         ("Untextured surface", f"{100 * t['untextured_area_frac']:.1f} %", "0 %", "—",
          _status(t["untextured_area_frac"], 0.005, 0.02)),
     ]
+    sil_path = work / "silhouette.json"
+    if stl and sil_path.exists():
+        sil = json.loads(sil_path.read_text())["after"]
+        res["silhouette"] = sil
+        rows += [
+            ("Alignment: STL outline vs photo outline", f"median {sil['median_um']:.0f} µm "
+             f"(p90 {sil['p90_um']:.0f}, signed {sil['signed_median_um']:+.0f}) over {sil['views']} views; "
+             f"floor ~1 px", f"≤ {1000 * r['rms_target_mm']:.0f} µm", f"≤ {1000 * r['rms_reject_mm']:.0f} µm",
+             _status(sil["median_um"] / 1000, r["rms_target_mm"], r["rms_reject_mm"])),
+        ]
     if source == "stl" and "align" in res:
         al = res["align"]
         rows += [
-            ("Alignment: dense prop points vs STL", f"RMS {al['prop_points_rms_mm']:.3f} mm "
-             f"(p95 {al['prop_points_p95_mm']:.3f}); includes dense-cloud noise",
-             f"≤ {r['rms_target_mm']} mm", f"≤ {r['rms_reject_mm']} mm",
-             _status(al["prop_points_rms_mm"], r["rms_target_mm"], r["rms_reject_mm"])),
+            ("Dense prop points vs STL (info)", f"RMS {al['prop_points_rms_mm']:.3f} mm "
+             f"(p95 {al['prop_points_p95_mm']:.3f}); mostly dense-cloud noise",
+             "—", "—", "INFO"),
             ("Textured STL surface (excl. holder side)", f"{100 * t['textured_excl_holder']:.1f} %",
              f"≥ {100 * r['coverage_target']:.0f} %", f"≥ {100 * r['coverage_reject']:.0f} %",
              _status(t["textured_excl_holder"], r["coverage_target"], r["coverage_reject"], False)),

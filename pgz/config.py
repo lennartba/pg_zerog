@@ -63,6 +63,18 @@ DEFAULTS: dict = {
         "min_saturation": 90,
         "min_value": 25,
     },
+    "silhouette": {
+        "enabled": True,
+        "threshold": 35,  # outline = max(R,G,B) above this (background <= 8)
+        "ring_px": 16,  # full-res px; neighbourhood checked for holder / dark prop parts
+        "max_px": 40,  # full-res px; farther outline matches are outliers
+        "view_stride": 3,  # every n-th view for the refinement
+        "refine_scale": 0.25,
+        "measure_scale": 0.5,
+        # 7-DOF refinement on outline distances. On ef01 the ICP alignment was already at
+        # the measurement floor (~1 px = 15 µm) and refining did not improve it -> 0.
+        "iterations": 0,
+    },
     "align": {
         "fine_candidates": 6,
     },
