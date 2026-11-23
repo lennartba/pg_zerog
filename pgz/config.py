@@ -69,10 +69,13 @@ DEFAULTS: dict = {
         "resolution_level": 0,  # always full-res images for texture
         "sharpness_weight": 0.0,  # OpenMVS default 0.5 = sharpening -> forbidden
         "global_seam_leveling": False,  # shifts colours per patch -> off
-        "local_seam_leveling": True,  # mild blending only at patch borders
-        "cost_smoothness_ratio": 0.1,
-        "virtual_face_images": 0,  # >0 groups coplanar faces into one view choice
-        "outlier_threshold": 0.06,
+        # Local seam leveling blends colours at patch borders. On the near single-channel
+        # red base coat it produced black holes and green/blue blobs (31 % of the
+        # surface untextured with it, 0 % without) -> off.
+        "local_seam_leveling": False,
+        "cost_smoothness_ratio": 0.01,  # lower = more compact patches
+        "virtual_face_images": 3,  # groups coplanar faces into one view choice
+        "outlier_threshold": 0.0,  # 0.06 rejected views and left faces untextured
         "max_texture_size": 8192,
         "empty_color": 0,
         # faces kept for texturing (quadric decimation keeps edges); 0 = no limit.
