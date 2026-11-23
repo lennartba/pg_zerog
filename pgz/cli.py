@@ -12,6 +12,8 @@ import sys
 import time
 from pathlib import Path
 
+import numpy as np
+
 from . import __version__
 from .config import load_config
 
@@ -81,10 +83,17 @@ def cmd_run(args) -> int:
             mesh_in = raw_mesh
         if cfg["mesh"]["refine"] and source == "scan":
             mesh_in = mvs.refine(dense_scene, mesh_in, cfg)
+    baked = source == "stl" and cfg["bake"]["enabled"]
     if step("texture"):
-        obj = mvs.texture(dense_scene, mesh_in, cfg, name=f"textured_{source}")
+        if baked:
+            from . import bake
+            obj = bake.bake(dense_dir, stl, tf, raw_mesh, mvs_dir / "baked", cfg)
+        else:
+            obj = mvs.texture(dense_scene, mesh_in, cfg, name=f"textured_{source}")
     if step("export"):
-        out_dir = export.export(obj, tf, scan, work, cfg, stl, suffix=source)
+        # baked OBJ is already in STL millimetres
+        out_dir = export.export(obj, np.eye(4) if baked else tf, scan, work, cfg, stl,
+                                suffix="baked" if baked else source)
     if step("report"):
         report.write_report(out_dir, scan, work, cfg, stl, tf, source)
     log.info("finished in %.1f min", (time.time() - t0) / 60)

@@ -131,6 +131,18 @@ def _status(val, target, minimum, lower_is_better=True):
     return "PASS" if val >= target else ("WARN" if minimum is not None and val >= minimum else "FAIL")
 
 
+def _edge_row(res, t):
+    e = res["edge_spread"]
+    et = e["texture"]
+    if et.get("edges", 0) < 20:
+        return ("Edge spread (strongest edges)", "too few edges", "≤ 1.5 texels", "≤ 2.5 texels", "NOT MEASURED")
+    um = et["median_px"] * t["texel_um_median"]
+    srcs = f"; photos {e['source_median_px']:.1f} px" if e["source_median_px"] else ""
+    return ("Edge spread, strongest edges (proxy: no painted edges on a base scan)",
+            f"{et['median_px']:.1f} texels = {um:.0f} µm{srcs}", "≤ 1.5 texels", "≤ 2.5 texels",
+            _status(et["median_px"], 1.5, 2.5))
+
+
 def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T,
                  source: str = "scan") -> dict:
     r = cfg["report"]
@@ -153,6 +165,22 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         if source == "scan":
             res["geometry"] = geometry_stats(obj_path, stl, cfg)
     (out_dir / "report.json").write_text(json.dumps(res, indent=2))
+
+    # edge spread: texture vs source photos
+    from .sharpness import edge_spread
+    import cv2
+    tex_path = next(iter(read_obj(obj_path).textures.values()))
+    timg = cv2.imread(str(tex_path))[:, :, ::-1]
+    es_t = edge_spread(timg, timg.max(2) > 0)
+    dense_imgs = sorted((work / "dense" / "images").glob("*[0-9].png"))
+    src = []
+    for p in dense_imgs[:: max(1, len(dense_imgs) // 10)][:10]:
+        im = cv2.imread(str(p))[:, :, ::-1]
+        mk = cv2.imread(str(p.with_suffix("")) + ".mask.png", cv2.IMREAD_GRAYSCALE)
+        e = edge_spread(im, mk > 0 if mk is not None else None)
+        if e.get("edges", 0) >= 20:
+            src.append(e["median_px"])
+    res["edge_spread"] = {"texture": es_t, "source_median_px": float(np.median(src)) if src else None}
 
     t, g = res["texture"], res.get("geometry")
     rows = [
@@ -202,8 +230,12 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         ("Texture file format", ", ".join(Path(p).suffix for p in (out_dir).glob("*.png")) or "?",
          "PNG/TIFF", "—", "PASS"),
         ("Sharpening / delighting", "off (sharpness-weight 0, no global seam leveling)", "none", "—", "PASS"),
-        ("Edge spread on painted edge", "—", "≤ 1.5 texels", "≤ 2.5 texels", "NOT MEASURED"),
-        ("Texture-on-mesh registration", "—", "≤ 0.05 mm", "—", "NOT MEASURED"),
+        _edge_row(res, t),
+        (("Texture-on-mesh registration", "projected onto the STL: = alignment above "
+          f"({res['silhouette']['median_um']:.0f} µm) + SfM reprojection", "≤ 0.05 mm", "—",
+          _status(res['silhouette']['median_um'] / 1000, 0.05, None))
+         if source == "stl" and "silhouette" in res else
+         ("Texture-on-mesh registration", "—", "≤ 0.05 mm", "—", "NOT MEASURED")),
         ("Colour vs checker ΔE", "—", "≤ 3", "—", "OUT OF SCOPE (prototype)"),
     ]
     md = [f"# Scan report {scan.name}", "",

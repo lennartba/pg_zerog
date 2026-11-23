@@ -78,6 +78,22 @@ DEFAULTS: dict = {
     "align": {
         "fine_candidates": 6,
     },
+    "bake": {
+        # own texturing of the STL (mesh.source = "stl"); OpenMVS TextureMesh otherwise
+        "enabled": True,
+        "texel_um": 15.0,  # ~ image sampling (15 µm/px on ef01); requirement <= 20
+        "max_size": 8192,
+        "max_stretch": 0.05,
+        "padding_px": 8,
+        "min_cos": 0.25,  # ignore views flatter than ~75°
+        "angle_power": 2.0,
+        "resolution_power": 1.0,
+        # weights are raised to this power: high = best view dominates (sharp),
+        # low = more averaging (smoother, blurs if registration is off)
+        "sharpness_power": 8.0,
+        "depth_scale": 0.5,  # occlusion depth maps at half resolution
+        "depth_tol_mm": 0.05,
+    },
     "texture": {
         "resolution_level": 0,  # always full-res images for texture
         "sharpness_weight": 0.0,  # OpenMVS default 0.5 = sharpening -> forbidden
