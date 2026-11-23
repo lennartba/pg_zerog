@@ -1,0 +1,12 @@
+# Python + OpenMVS. On a machine with an NVIDIA driver conda picks the CUDA build.
+name: pgz
+channels: [conda-forge]
+dependencies:
+  - python=3.12
+  - openmvs=2.4
+  - numpy
+  - scipy
+  - pillow
+  - opencv
+  - trimesh
+  - rtree

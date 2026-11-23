@@ -1,0 +1,19 @@
+# Win10, RTX 2070 (8 GB), Ryzen 5 5600X, 32 GB.
+# Adjust the two paths to your micromamba root (micromamba info -> "base environment").
+[tools]
+colmap_dir = "C:/Users/YOU/micromamba/envs/pgz-colmap/Library/bin"
+openmvs_dir = "C:/Users/YOU/micromamba/envs/pgz/Library/bin"
+use_gpu = true
+
+[sfm]
+max_image_size = 3200
+max_num_features = 16000
+
+[dense]
+resolution_level = 0
+max_resolution = 4200
+number_views = 8
+
+[mesh]
+refine = true
+refine_resolution_level = 0

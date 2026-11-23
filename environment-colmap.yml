@@ -1,0 +1,5 @@
+# COLMAP in its own env: it cannot be solved together with OpenMVS.
+name: pgz-colmap
+channels: [conda-forge]
+dependencies:
+  - colmap=4.2

@@ -1,0 +1,14 @@
+# Linux container, CPU only: reduced feature resolution so a test run stays < ~1-2 h.
+[tools]
+colmap_dir = "/root/.local/mamba/root/envs/pgz-colmap/bin"
+openmvs_dir = "/root/.local/mamba/root/envs/pgz/bin"
+use_gpu = false
+
+[sfm]
+max_image_size = 2000
+max_num_features = 8192
+
+[dense]
+resolution_level = 1
+max_resolution = 2560
+number_views = 5
