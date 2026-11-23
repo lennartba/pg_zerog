@@ -198,7 +198,7 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
          _status(t["untextured_area_frac"], 0.005, 0.02)),
     ]
     sil_path = work / "silhouette.json"
-    if stl and sil_path.exists():
+    if stl and sil_path.exists() and json.loads(sil_path.read_text())["after"]["views"] > 0:
         sil = json.loads(sil_path.read_text())["after"]
         res["silhouette"] = sil
         rows += [

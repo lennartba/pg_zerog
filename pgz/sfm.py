@@ -86,6 +86,24 @@ def run_colmap(scan: Scan, work: Path, cfg: dict) -> Path:
              "--FeatureMatching.num_threads", threads,
              ], logs / "colmap_matching.log")
 
+    if (not sparse.exists() or not any(sparse.iterdir())) and s["mapper_type"] == "global":
+        # Global SfM: all pairs at once. The incremental mapper fails to grow on this
+        # data (~40 verified matches per pair): ef01 gave 8, 179 or 199 images
+        # depending on the random start. Focal length has no EXIF prior, so it is
+        # estimated from the view graph first.
+        sparse.mkdir(exist_ok=True)
+        run([colmap, "view_graph_calibrator", "--database_path", db], logs / "colmap_calibrate.log")
+        run([colmap, "global_mapper",
+             "--database_path", db, "--image_path", work / "images_feat",
+             "--output_path", sparse,
+             "--GlobalMapper.num_threads", threads,
+             "--GlobalMapper.random_seed", str(s["random_seed"]),
+             "--GlobalMapper.gp_use_gpu", gpu,
+             "--GlobalMapper.ba_ceres_use_gpu", gpu,
+             # retriangulation removed every point on ef01; the registration pass and
+             # bundle adjustment below refine the model instead
+             "--GlobalMapper.skip_retriangulation", "1",
+             ], logs / "colmap_mapper.log")
     if not sparse.exists() or not any(sparse.iterdir()):
         sparse.mkdir(exist_ok=True)
         run([colmap, "mapper",
@@ -129,6 +147,8 @@ def run_colmap(scan: Scan, work: Path, cfg: dict) -> Path:
     log.info("  final model: %d of %d images registered", n, len(scan.views))
     if n < len(scan.views):
         log.warning("  %d images NOT registered", len(scan.views) - n)
+    if n < 0.5 * len(scan.views):
+        raise RuntimeError(f"SfM registered only {n} of {len(scan.views)} images; see {logs}")
     return work / "sparse_txt" / "ba"
 
 

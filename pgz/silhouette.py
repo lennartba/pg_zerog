@@ -169,6 +169,9 @@ def measure_and_refine(dense: Path, stl: Path, T: np.ndarray, work: Path, cfg: d
     pv1, _, _ = stats(Tcur, views, ms, imgs_all)
 
     def summary(pv):
+        if len(pv) == 0:
+            return {"views": 0, "median_px": float("nan"), "median_um": float("nan"),
+                    "p90_um": float("nan"), "usable_outline": 0.0, "signed_median_um": float("nan")}
         return {"views": int(len(pv)), "median_px": float(np.median(pv[:, 0])),
                 "median_um": float(np.median(pv[:, 1])), "p90_um": float(np.quantile(pv[:, 1], 0.9)),
                 "usable_outline": float(np.median(pv[:, 2])),
@@ -177,6 +180,8 @@ def measure_and_refine(dense: Path, stl: Path, T: np.ndarray, work: Path, cfg: d
     info = {"scan_to_stl": Tcur.tolist(), "before": summary(pv0), "after": summary(pv1),
             "scale_mm_per_unit": scale_of(Tcur)}
     out.write_text(json.dumps(info, indent=2))
+    if info["after"]["views"] < 10:
+        log.warning("  silhouette check: only %d usable views - alignment NOT verified", info["after"]["views"])
     log.info("  silhouette distance (median over %d views): %.1f µm before, %.1f µm after refinement",
              info["after"]["views"], info["before"]["median_um"], info["after"]["median_um"])
     return Tcur
