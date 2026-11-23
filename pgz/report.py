@@ -131,16 +131,20 @@ def _status(val, target, minimum, lower_is_better=True):
     return "PASS" if val >= target else ("WARN" if minimum is not None and val >= minimum else "FAIL")
 
 
-def _edge_row(res, t):
+def _edge_row(res, t, r):
+    """Requirement: <= 1.5 texels at the 20 µm target texel (30 µm), <= 2.5 texels at the
+    30 µm minimum texel (75 µm). Compared in µm, so finer texels are not penalised."""
     e = res["edge_spread"]
     et = e["texture"]
+    tgt = 1.5 * r["texel_target_um"]
+    mn = 2.5 * r["texel_min_um"]
     if et.get("edges", 0) < 20:
-        return ("Edge spread (strongest edges)", "too few edges", "≤ 1.5 texels", "≤ 2.5 texels", "NOT MEASURED")
+        return ("Edge spread (strongest edges)", "too few edges", f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm", "NOT MEASURED")
     um = et["median_px"] * t["texel_um_median"]
     srcs = f"; photos {e['source_median_px']:.1f} px" if e["source_median_px"] else ""
-    return ("Edge spread, strongest edges (proxy: no painted edges on a base scan)",
-            f"{et['median_px']:.1f} texels = {um:.0f} µm{srcs}", "≤ 1.5 texels", "≤ 2.5 texels",
-            _status(et["median_px"], 1.5, 2.5))
+    return ("Edge spread, strongest texture edges (proxy: no painted edges on a base scan)",
+            f"{um:.0f} µm ({et['median_px']:.1f} texels){srcs}", f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm",
+            _status(um, tgt, mn))
 
 
 def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T,
@@ -227,10 +231,12 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         ("Source images", f"{inp.get('format')} q{inp.get('jpeg_quality')} {inp.get('subsampling', '')}",
          "lossless / 4:4:4", "—",
          "WARN" if inp.get("subsampling") not in (None, "4:4:4") else "PASS"),
-        ("Texture file format", ", ".join(Path(p).suffix for p in (out_dir).glob("*.png")) or "?",
-         "PNG/TIFF", "—", "PASS"),
-        ("Sharpening / delighting", "off (sharpness-weight 0, no global seam leveling)", "none", "—", "PASS"),
-        _edge_row(res, t),
+        ("Texture file format", ", ".join(sorted({p.suffix for p in read_obj(obj_path).textures.values()})),
+         "PNG/TIFF", "—",
+         "PASS" if all(p.suffix.lower() in (".png", ".tif", ".tiff") for p in read_obj(obj_path).textures.values())
+         else "FAIL"),
+        ("Sharpening / delighting / colour leveling", "none applied", "none", "—", "PASS"),
+        _edge_row(res, t, r),
         (("Texture-on-mesh registration", "projected onto the STL: = alignment above "
           f"({res['silhouette']['median_um']:.0f} µm) + SfM reprojection", "≤ 0.05 mm", "—",
           _status(res['silhouette']['median_um'] / 1000, 0.05, None))
@@ -259,5 +265,10 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         "manual edits: none",
     ]
     (out_dir / "note.txt").write_text("\n".join(note) + "\n")
+    try:
+        from .preview import render
+        render(obj_path, out_dir / "preview.jpg")
+    except Exception as exc:  # preview is a convenience, never fail the report on it
+        log.warning("  preview failed: %s", exc)
     log.info("  report: %s", out_dir / "report.md")
     return res

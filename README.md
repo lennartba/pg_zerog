@@ -1,26 +1,38 @@
 # pg_zerog
 
 Photogrammetry pipeline prototype for focus-stacked scans from an **OpenScan Mini + macro add-on**,
-producing textured scans for edgefit (see the requirements doc *Photogrammetry output requirements for edgefit*).
+producing textured scans for edgefit (requirements doc: *Photogrammetry output requirements for edgefit*).
 
-Open source only: [COLMAP](https://colmap.github.io/) (structure from motion) and
-[OpenMVS](https://github.com/cdcseacave/openMVS) (dense cloud, mesh, texture), orchestrated in Python.
+Open source only: [COLMAP](https://colmap.github.io/) (structure from motion),
+[OpenMVS](https://github.com/cdcseacave/openMVS) (dense cloud, mesh),
+[Open3D](https://www.open3d.org/) (UVAtlas, ray casting), orchestrated in Python.
+
+## Approach
+
+edgefit takes geometry from the prop's STL and only colour from the scan. So the pipeline uses
+photogrammetry to find the cameras and the prop's exact position, then **projects the photos onto the
+STL** and bakes the texture itself (like Metashape: a UV atlas with few large charts, blended best views).
+The photogrammetry mesh is only used to find the holder (stick, putty) as an occluder.
+
+Why not texture the scan mesh with OpenMVS: on the plain base coat the dense reconstruction has holes
+(ef01: 63 % coverage), and OpenMVS TextureMesh packs every view patch separately
+(ef01: ~19,000 islands, seams everywhere; its OBJ export also writes JPEG only).
+The old route is still available with `mesh.source = "scan"`.
 
 ## Pipeline
 
-| Step | Tool | What happens | Why |
-| --- | --- | --- | --- |
-| prepare | Python | Link images, foreground masks (threshold on black background) | Holder stays in: it rotates with the prop and gives the matcher texture |
-| sfm | COLMAP | SIFT, matching only angular neighbours from the scanner's `path.json`, mapping with one shared camera | Pose prior saves ~85 % of matching and avoids wrong matches between similar sides |
-| undistort | Python/OpenCV | Undistort to **PNG**, PINHOLE model, OpenMVS masks | COLMAP's own undistorter would re-encode JPEG |
-| dense | OpenMVS | Depth maps, fused point cloud, masked | |
-| mesh | OpenMVS | Delaunay mesh, **smoothing off** | Smoothing rounds off bevels |
-| crop | Python | Similarity alignment to the STL (colour segmentation → PCA → ICP with scale), keep faces within 0.6 mm of the STL, optional RefineMesh | Removes holder/putty; gives true mm |
-| texture | OpenMVS | Per-face best view, **sharpening off**, **no global seam leveling**, full-res images | Requirements forbid sharpening and colour shifts |
-| export | Python | `model.obj/.mtl` in STL mm, PNG textures, STL copy | Deliverable layout from the requirements |
-| report | Python | Texel size on the prop, density, untextured area, RMS vs STL, coverage | Pass/warn/fail against the requirements |
+| Step | Tool | What happens |
+| --- | --- | --- |
+| prepare | Python | Link images, foreground masks (black background), contrast-enhanced copies for SIFT only (red base coat: ~150 → ~2,000 features/image) |
+| sfm | COLMAP | SIFT, matching only angular neighbours from the scanner's `path.json`, mapping with one shared camera and relaxed registration thresholds, then leftover images registered and bundle-adjusted (ef01: 196/200) |
+| undistort | Python/OpenCV | Undistort to **PNG** (COLMAP's undistorter would re-encode JPEG), OpenMVS masks |
+| dense, mesh | OpenMVS | Dense cloud and mesh (only for alignment and the holder occluder) |
+| crop / align | Python | Similarity alignment to the STL: prop found by base-coat colour → PCA → trimmed ICP (rigid, then scaled with bidirectional correspondences). **Independent check**: STL outline ray-cast into every photo vs the photo's object outline (ef01: median 15 µm) |
+| texture | Python/Open3D | UV atlas (UVAtlas, ef01: 29 charts), every texel projected into every view, visibility by ray casting STL + holder, blend in linear light with the best view dominating, chart padding. No sharpening, no colour leveling |
+| export | Python | `model.obj/.mtl` in STL mm, PNG texture, STL copy |
+| report | Python | Texel size and density, coverage, alignment, edge spread (texture vs photos), `report.md`, `preview.jpg` |
 
-Finished steps are skipped on re-run (delete the step's output to redo it).
+Finished steps are skipped on re-run (delete a step's output to redo it).
 
 ## Install
 
@@ -31,8 +43,9 @@ micromamba env create -f environment.yml
 micromamba env create -f environment-colmap.yml
 ```
 
-On Windows with an NVIDIA driver conda installs the CUDA builds of both. Put the two env `bin`
-folders (Windows: `<env>/Library/bin`) into a config file, see `config/`.
+COLMAP lives in its own env because it cannot be solved together with OpenMVS. On Windows with an
+NVIDIA driver conda installs the CUDA builds. Put the two env `bin` folders (Windows: `<env>/Library/bin`)
+into a config file, see `config/`.
 
 ## Run
 
@@ -40,20 +53,36 @@ folders (Windows: `<env>/Library/bin`) into a config file, see `config/`.
 micromamba run -n pgz python -m pgz run <unzipped OpenScan project> --out <work dir> --stl <prop.stl> --config config/windows-rtx2070.toml
 ```
 
-Result: `<work dir>/deliver/<project>_<scan>/` with `model.obj`, `model.mtl`, texture PNGs, the STL,
-`note.txt` and `report.md`.
+Result: `<work dir>/deliver/<project>_<scan>_baked/` with `model.obj`, `model.mtl`, `model_albedo.png`,
+the STL, `note.txt`, `report.md`, `report.json`, `preview.jpg`.
 
-`--until <step>` stops early; useful for checking the alignment before texturing.
+`--until <step>` stops early.
 
 ## Configs
 
 - `config/container.toml` – Linux CPU test container (reduced feature/depth resolution)
-- `config/windows-rtx2070.toml` – full resolution, GPU, RefineMesh on
+- `config/windows-rtx2070.toml` – full resolution, GPU
 
-All keys and defaults: `pgz/config.py`.
+All keys, defaults and the reasons for non-default values: `pgz/config.py`.
 
-## Known limits (prototype)
+## ef01 results (container, CPU)
 
-- Source images are JPEG q90 with 4:2:0 chroma subsampling (OpenScan firmware); colour edges have half resolution.
+Measured on the sample scan with the current defaults; see the report in the work folder for the latest run.
+
+| | OpenMVS on scan mesh | OpenMVS on STL | own baking on STL |
+| --- | --- | --- | --- |
+| UV islands / patches | tens of thousands | 19,314 | 29 charts |
+| Textured surface (excl. holder side) | 63 % | 100 % | ~100 % (putty contact excluded) |
+| Alignment check (outline vs photo) | – | – | median 15 µm |
+| Edge spread, label text | – | – | texture ~52 µm vs photos ~45 µm |
+
+## Known limits
+
+- Source images are JPEG q90 with 4:2:0 chroma subsampling (OpenScan firmware): colour edges have half
+  resolution. The photos resolve ~45 µm edges; that is the ceiling for the texture.
 - Prop segmentation for the first alignment uses the base-coat colour (`[segment]`, default: red).
-- Not measured automatically yet: edge spread on painted edges, texture-to-mesh registration, colour (ΔE, no checker).
+- Edge spread is measured on the strongest texture edges (label, shading) – a proxy until a scan with
+  painted highlights exists.
+- No colour calibration (checker out of scope for the prototype).
+- UV chart borders follow UVAtlas (often sharp edges). Colours are continuous across them because every
+  texel is computed by the same blend, but the requirement "seams away from edges" is not enforced.
