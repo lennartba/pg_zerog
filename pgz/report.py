@@ -135,15 +135,21 @@ def _edge_row(res, t, r):
     """Requirement: <= 1.5 texels at the 20 µm target texel (30 µm), <= 2.5 texels at the
     30 µm minimum texel (75 µm). Compared in µm, so finer texels are not penalised."""
     e = res["edge_spread"]
-    et = e["texture"]
     tgt = 1.5 * r["texel_target_um"]
     mn = 2.5 * r["texel_min_um"]
+    m = e.get("matched")
+    if m and m.get("edges", 0) >= 20:
+        um = m["texture_um"]
+        return (f"Edge spread: texture rendered into {m['views']} photos, same {m['edges']} interior edges "
+                "(proxy: no painted edges on a base scan)",
+                f"{um:.0f} µm ({um / t['texel_um_median']:.1f} texels); photos {m['photo_um']:.0f} µm",
+                f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm", _status(um, tgt, mn))
+    et = e.get("texture", {})
     if et.get("edges", 0) < 20:
-        return ("Edge spread (strongest edges)", "too few edges", f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm", "NOT MEASURED")
+        return ("Edge spread", "too few edges", f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm", "NOT MEASURED")
     um = et["median_px"] * t["texel_um_median"]
-    srcs = f"; photos {e['source_median_px']:.1f} px" if e["source_median_px"] else ""
-    return ("Edge spread, strongest texture edges (proxy: no painted edges on a base scan)",
-            f"{um:.0f} µm ({et['median_px']:.1f} texels){srcs}", f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm",
+    return ("Edge spread, strongest texture edges (no cameras: not compared with photos)",
+            f"{um:.0f} µm ({et['median_px']:.1f} texels)", f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm",
             _status(um, tgt, mn))
 
 
@@ -170,21 +176,19 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
             res["geometry"] = geometry_stats(obj_path, stl, cfg)
     (out_dir / "report.json").write_text(json.dumps(res, indent=2))
 
-    # edge spread: texture vs source photos
-    from .sharpness import edge_spread
+    # edge spread: the texture rendered back into real cameras vs the photos, same edges
     import cv2
-    tex_path = next(iter(read_obj(obj_path).textures.values()))
-    timg = cv2.imread(str(tex_path))[:, :, ::-1]
-    es_t = edge_spread(timg, timg.max(2) > 0)
-    dense_imgs = sorted((work / "dense" / "images").glob("*[0-9].png"))
-    src = []
-    for p in dense_imgs[:: max(1, len(dense_imgs) // 10)][:10]:
-        im = cv2.imread(str(p))[:, :, ::-1]
-        mk = cv2.imread(str(p.with_suffix("")) + ".mask.png", cv2.IMREAD_GRAYSCALE)
-        e = edge_spread(im, mk > 0 if mk is not None else None)
-        if e.get("edges", 0) >= 20:
-            src.append(e["median_px"])
-    res["edge_spread"] = {"texture": es_t, "source_median_px": float(np.median(src)) if src else None}
+    from .sharpness import edge_spread, matched_edge_spread
+    obj = read_obj(obj_path)
+    timg = cv2.imread(str(next(iter(obj.textures.values()))))[:, :, ::-1]
+    dense = work / "dense"
+    if stl and T is not None and (dense / "sparse" / "images.txt").exists():
+        from .align import scale_of
+        from .views import load_views
+        res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), load_views(dense),
+                                                             scale_of(T))}
+    else:
+        res["edge_spread"] = {"texture": edge_spread(timg, timg.max(2) > 0)}
 
     t, g = res["texture"], res.get("geometry")
     rows = [

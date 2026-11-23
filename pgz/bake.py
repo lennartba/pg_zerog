@@ -139,6 +139,9 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
             log.info("  holder occluder: %d faces from the scan mesh", len(hf))
 
     X = apply(S, P)  # texel points, scan frame
+    # normals into the scan frame: rotation part of S (a similarity rotates, it does not keep normals)
+    Rs = S[:3, :3] / scale_of(S)
+    Nrm = Nrm @ Rs.T
     acc = np.zeros((len(pix), 3), np.float64)
     wsum = np.zeros(len(pix), np.float64)
     wmax = np.zeros(len(pix), np.float64)
@@ -151,7 +154,7 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
         C = v.center
         to_cam = C[None] - X
         dist = np.linalg.norm(to_cam, axis=1)
-        cosang = np.einsum("ij,ij->i", Nrm, to_cam / dist[:, None])  # normals: same in both frames (similarity)
+        cosang = np.einsum("ij,ij->i", Nrm, to_cam / dist[:, None])
         uvp, z = v.project(X)
         cand = (cosang > b["min_cos"]) & (z > 0) & (uvp[:, 0] >= 1) & (uvp[:, 1] >= 1) \
             & (uvp[:, 0] < v.w - 2) & (uvp[:, 1] < v.h - 2)
