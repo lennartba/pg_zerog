@@ -79,9 +79,76 @@ def _transform_obj(src: Path, dst: Path, T: np.ndarray | None) -> None:
                 fo.write(line)
 
 
+def textured_ply_to_obj(ply: Path) -> Path:
+    """OpenMVS textured PLY (per-face texcoords, PNG textures) -> OBJ + MTL.
+
+    OpenMVS's own OBJ export always writes the texture as JPEG; its PLY export
+    writes PNG. Hence this detour."""
+    with open(ply, "rb") as fh:
+        head = b""
+        while not head.endswith(b"end_header\n"):
+            head += fh.readline()
+        data = fh.read()
+    lines = head.decode("ascii").splitlines()
+    if "binary_little_endian" not in lines[1]:
+        raise ValueError(f"{ply}: only binary_little_endian supported")
+    textures = [l.split(maxsplit=2)[2] for l in lines if l.startswith("comment TextureFile")]
+    nv = nf = 0
+    vprops, fprops, cur = [], [], None
+    for l in lines:
+        t = l.split()
+        if t[:1] == ["element"]:
+            cur = t[1]
+            if cur == "vertex":
+                nv = int(t[2])
+            elif cur == "face":
+                nf = int(t[2])
+        elif t[:1] == ["property"]:
+            (vprops if cur == "vertex" else fprops).append(t[1:])
+    vdt = np.dtype([(p[1], "<f4") for p in vprops])
+    if any(p[0] not in ("float", "float32") for p in vprops):
+        raise ValueError("unexpected vertex properties")
+    v = np.frombuffer(data, vdt, count=nv)
+    xyz = np.stack([v["x"], v["y"], v["z"]], 1)
+    # faces: assume every face is a triangle with 6 texcoords -> fixed record size
+    fdt = []
+    for p in fprops:
+        if p[0] == "list":
+            n = 3 if p[3] == "vertex_indices" else 6
+            fdt += [(p[3] + "_n", "u1"), (p[3], "<" + {"uint32": "u4", "int": "i4", "uint": "u4",
+                                                       "int32": "i4", "float32": "f4", "float": "f4"}[p[2]], (n,))]
+        else:
+            fdt.append((p[1], "<" + {"int": "i4", "int32": "i4", "uint": "u4", "uint32": "u4",
+                                     "uint8": "u1", "uchar": "u1"}[p[0]]))
+    f = np.frombuffer(data, np.dtype(fdt), count=nf, offset=nv * vdt.itemsize)
+    if not ((f["vertex_indices_n"] == 3).all() and (f["texcoord_n"] == 6).all()):
+        raise ValueError("non-triangle face or missing texcoords")
+    tex_id = f["texnumber"] if "texnumber" in f.dtype.names else np.zeros(nf, int)
+
+    obj, mtl = ply.with_suffix(".obj"), ply.with_suffix(".mtl")
+    with open(mtl, "w") as fh:
+        for i, t in enumerate(textures):
+            fh.write(f"newmtl material_{i}\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nillum 1\nmap_Kd {t}\n\n")
+    uv = f["texcoord"].reshape(-1, 2)
+    with open(obj, "w") as fh:
+        fh.write(f"mtllib {mtl.name}\n")
+        fh.write("".join(f"v {a:.7g} {b:.7g} {c:.7g}\n" for a, b, c in xyz))
+        fh.write("".join(f"vt {a:.7g} {b:.7g}\n" for a, b in uv))
+        vi = f["vertex_indices"] + 1
+        ti = np.arange(nf * 3).reshape(nf, 3) + 1
+        for m in np.unique(tex_id):
+            fh.write(f"usemtl material_{m}\n")
+            sel = np.where(tex_id == m)[0]
+            fh.write("".join(f"f {a}/{x} {b}/{y} {c}/{z}\n"
+                             for (a, b, c), (x, y, z) in zip(vi[sel], ti[sel])))
+    return obj
+
+
 def export(obj_path: Path, T, scan, work: Path, cfg: dict, stl: Path | None) -> Path:
     out = work / "deliver" / scan.name
     out.mkdir(parents=True, exist_ok=True)
+    if obj_path.suffix.lower() == ".ply":
+        obj_path = textured_ply_to_obj(obj_path)
     src = obj_path.parent
     _transform_obj(obj_path, out / "model.obj", T)
     obj = read_obj(obj_path)

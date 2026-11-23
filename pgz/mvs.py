@@ -81,10 +81,10 @@ def texture(dense_scene: Path, mesh_in: Path, cfg: dict) -> Path:
     decimate = min(1.0, t["max_faces"] / faces) if t["max_faces"] else 1.0
     out_dir = dense_scene.parent / "textured"
     out_dir.mkdir(exist_ok=True)
-    out = out_dir / "model.obj"
+    out = out_dir / "model.ply"
     if not out.exists():
         run([_tool(cfg, "TextureMesh"), dense_scene.resolve(), "-m", mesh_in.resolve(),
-             "-o", out.resolve(), "--export-type", "obj",
+             "-o", out.resolve(), "--export-type", "ply",
              "--resolution-level", str(t["resolution_level"]),
              "--min-resolution", "8192",
              "--sharpness-weight", str(t["sharpness_weight"]),
