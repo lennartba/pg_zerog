@@ -244,3 +244,18 @@ def crop_mesh(mesh_ply: Path, stl: Path, T: np.ndarray, out: Path, cfg: dict) ->
     log.info("  crop: kept %d of %d faces (%.1f%%)", len(m.faces), len(keep), 100 * len(m.faces) / len(keep))
     m.export(out)
     return out
+
+
+def stl_to_scan_frame(stl: Path, T: np.ndarray, out: Path, max_edge_mm: float) -> Path:
+    """The STL, remeshed to an even edge length, moved into the scan (camera) frame.
+
+    Big flat STL triangles would get a single view each and poor occlusion tests;
+    an even mesh lets OpenMVS choose views per region."""
+    if out.exists():
+        return out
+    m = trimesh.load(stl, force="mesh")
+    v, f = trimesh.remesh.subdivide_to_size(m.vertices, m.faces, max_edge=max_edge_mm)
+    v = apply(np.linalg.inv(T), v)
+    trimesh.Trimesh(v, f, process=False).export(out)
+    log.info("  STL remeshed to %d faces (max edge %.2f mm), moved to scan frame", len(f), max_edge_mm)
+    return out

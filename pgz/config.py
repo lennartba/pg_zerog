@@ -45,6 +45,11 @@ DEFAULTS: dict = {
         "number_views_fuse": 3,
     },
     "mesh": {
+        # "stl": texture the aligned STL (edgefit takes geometry from the STL anyway;
+        #        the scan mesh has holes on plain base coat).
+        # "scan": texture the photogrammetry mesh (cropped to the STL if given).
+        "source": "stl",
+        "stl_max_edge_mm": 0.3,  # STL is remeshed to this edge length before texturing
         "smooth": 0,  # OpenMVS default is 2: rounds off bevels -> off
         "refine": False,  # RefineMesh: better edges, slow on CPU
         "refine_resolution_level": 1,
@@ -66,6 +71,7 @@ DEFAULTS: dict = {
         "global_seam_leveling": False,  # shifts colours per patch -> off
         "local_seam_leveling": True,  # mild blending only at patch borders
         "cost_smoothness_ratio": 0.1,
+        "virtual_face_images": 0,  # >0 groups coplanar faces into one view choice
         "outlier_threshold": 0.06,
         "max_texture_size": 8192,
         "empty_color": 0,

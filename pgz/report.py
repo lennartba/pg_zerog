@@ -63,7 +63,12 @@ def texel_stats(obj_path: Path, cfg: dict) -> dict:
     tol = cfg["report"]["density_tolerance"]
     within = float(w[np.abs(s / med - 1) <= tol].sum() / w.sum())
     atlas = sum(a * b for a, b in sizes.values())
+    hn = np.asarray(cfg["report"]["holder_normal"], float)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) / (2 * a3[:, None])
+    vis = ~(normals @ hn > 0.9)
     return {
+        "textured_excl_holder": float(a3[vis & ~untextured].sum() / a3[vis].sum()),
         "textures": {k: list(v) for k, v in sizes.items()},
         "texel_um_median": med, "texel_um_p10": q(0.1), "texel_um_p90": q(0.9),
         "density_within_tol": within,
@@ -96,15 +101,25 @@ def geometry_stats(obj_path: Path, stl: Path, cfg: dict) -> dict:
     }
 
 
-def _tool_versions(work: Path) -> dict:
+def _tool_versions(work: Path, cfg: dict) -> dict:
+    import subprocess
+
+    from .tools import find_tool
+
     out = {}
-    for f, key, pat in (("colmap_features.log", "colmap", r"COLMAP ([\d.]+)"),
-                        ("mvs_import.log", "openmvs", r"OpenMVS \S+ (v[\d.]+)")):
-        p = work / "logs" / f
-        if p.exists():
-            m = re.search(pat, p.read_text(errors="replace"))
-            if m:
-                out[key] = m.group(1)
+    try:
+        txt = subprocess.run([find_tool("colmap", cfg["tools"]["colmap_dir"]), "-h"],
+                             capture_output=True, text=True, timeout=30).stdout
+        m = re.search(r"COLMAP ([\d.]+)", txt)
+        if m:
+            out["colmap"] = m.group(1)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    p = work / "logs" / "mvs_import.log"
+    if p.exists():
+        m = re.search(r"OpenMVS \S+ (v[\d.]+)", p.read_text(errors="replace"))
+        if m:
+            out["openmvs"] = m.group(1)
     return out
 
 
@@ -116,10 +131,11 @@ def _status(val, target, minimum, lower_is_better=True):
     return "PASS" if val >= target else ("WARN" if minimum is not None and val >= minimum else "FAIL")
 
 
-def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T) -> dict:
+def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T,
+                 source: str = "scan") -> dict:
     r = cfg["report"]
     obj_path = out_dir / "model.obj"
-    res: dict = {"pgz": __version__, "scan": scan.name}
+    res: dict = {"pgz": __version__, "scan": scan.name, "mesh_source": source}
     res["input"] = {
         "views": len(scan.views),
         "image_size": list(scan.image_size),
@@ -130,11 +146,12 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
     if imgs_txt.exists():
         n = sum(1 for l in imgs_txt.read_text().splitlines() if l and not l.startswith("#")) // 2
         res["input"]["registered"] = n
-    res["tools"] = _tool_versions(work)
+    res["tools"] = _tool_versions(work, cfg)
     res["texture"] = texel_stats(obj_path, cfg)
     if stl and T is not None:
-        res["geometry"] = geometry_stats(obj_path, stl, cfg)
         res["align"] = json.loads((work / "align.json").read_text())
+        if source == "scan":
+            res["geometry"] = geometry_stats(obj_path, stl, cfg)
     (out_dir / "report.json").write_text(json.dumps(res, indent=2))
 
     t, g = res["texture"], res.get("geometry")
@@ -148,6 +165,17 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         ("Untextured surface", f"{100 * t['untextured_area_frac']:.1f} %", "0 %", "—",
          _status(t["untextured_area_frac"], 0.005, 0.02)),
     ]
+    if source == "stl" and "align" in res:
+        al = res["align"]
+        rows += [
+            ("Alignment: dense prop points vs STL", f"RMS {al['prop_points_rms_mm']:.3f} mm "
+             f"(p95 {al['prop_points_p95_mm']:.3f}); includes dense-cloud noise",
+             f"≤ {r['rms_target_mm']} mm", f"≤ {r['rms_reject_mm']} mm",
+             _status(al["prop_points_rms_mm"], r["rms_target_mm"], r["rms_reject_mm"])),
+            ("Textured STL surface (excl. holder side)", f"{100 * t['textured_excl_holder']:.1f} %",
+             f"≥ {100 * r['coverage_target']:.0f} %", f"≥ {100 * r['coverage_reject']:.0f} %",
+             _status(t["textured_excl_holder"], r["coverage_target"], r["coverage_reject"], False)),
+        ]
     if g:
         rows += [
             ("Scan vs STL RMS", f"{g['rms_mm']:.3f} mm (p95 {g['p95_mm']:.3f})",
@@ -170,6 +198,7 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         ("Colour vs checker ΔE", "—", "≤ 3", "—", "OUT OF SCOPE (prototype)"),
     ]
     md = [f"# Scan report {scan.name}", "",
+          f"Mesh: {'aligned STL, textured' if source == 'stl' else 'photogrammetry mesh'}. "
           f"pgz {__version__}; COLMAP {res['tools'].get('colmap', '?')}; OpenMVS {res['tools'].get('openmvs', '?')}; "
           f"{inp['views']} views, {inp.get('registered', '?')} registered; image {inp['image_size'][0]}×{inp['image_size'][1]}.",
           "", "| Requirement | Measured | Target | Minimum | Status |", "| --- | --- | --- | --- | --- |"]

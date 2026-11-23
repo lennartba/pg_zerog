@@ -65,20 +65,25 @@ def cmd_run(args) -> int:
         raw_mesh = mvs.mesh(dense_scene, cfg)
     if step("crop"):
         tf = None
+        source = cfg["mesh"]["source"] if stl else "scan"
         if stl:
             tf = align.align_to_stl(mvs_dir / "scene_dense.ply", raw_mesh, stl, work, cfg)
+        if source == "stl":
+            mesh_in = align.stl_to_scan_frame(stl, tf, mvs_dir / "stl_in_scan.ply",
+                                              cfg["mesh"]["stl_max_edge_mm"])
+        elif stl:
             mesh_in = align.crop_mesh(raw_mesh, stl, tf, mvs_dir / "mesh_crop.ply", cfg)
         else:
             log.warning("  no STL: holder is NOT removed and no scale is known")
             mesh_in = raw_mesh
-        if cfg["mesh"]["refine"]:
+        if cfg["mesh"]["refine"] and source == "scan":
             mesh_in = mvs.refine(dense_scene, mesh_in, cfg)
     if step("texture"):
-        obj = mvs.texture(dense_scene, mesh_in, cfg)
+        obj = mvs.texture(dense_scene, mesh_in, cfg, name=f"textured_{source}")
     if step("export"):
-        out_dir = export.export(obj, tf, scan, work, cfg, stl)
+        out_dir = export.export(obj, tf, scan, work, cfg, stl, suffix=source)
     if step("report"):
-        report.write_report(out_dir, scan, work, cfg, stl, tf)
+        report.write_report(out_dir, scan, work, cfg, stl, tf, source)
     log.info("finished in %.1f min", (time.time() - t0) / 60)
     return 0
 

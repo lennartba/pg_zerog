@@ -73,13 +73,13 @@ def ply_face_count(path: Path) -> int:
     raise ValueError(f"no face element in {path}")
 
 
-def texture(dense_scene: Path, mesh_in: Path, cfg: dict) -> Path:
+def texture(dense_scene: Path, mesh_in: Path, cfg: dict, name: str = "textured") -> Path:
     t = cfg["texture"]
     # TextureMesh memory grows with faces x views (2.35 M faces, 179 views > 12 GB).
     # Texture detail comes from the images, not the mesh density.
     faces = ply_face_count(mesh_in)
     decimate = min(1.0, t["max_faces"] / faces) if t["max_faces"] else 1.0
-    out_dir = dense_scene.parent / "textured"
+    out_dir = dense_scene.parent / name
     out_dir.mkdir(exist_ok=True)
     out = out_dir / "model.ply"
     if not out.exists():
@@ -91,6 +91,7 @@ def texture(dense_scene: Path, mesh_in: Path, cfg: dict) -> Path:
              "--global-seam-leveling", str(int(t["global_seam_leveling"])),
              "--local-seam-leveling", str(int(t["local_seam_leveling"])),
              "--cost-smoothness-ratio", str(t["cost_smoothness_ratio"]),
+             "--virtual-face-images", str(t["virtual_face_images"]),
              "--outlier-threshold", str(t["outlier_threshold"]),
              "--max-texture-size", str(t["max_texture_size"]),
              "--empty-color", str(t["empty_color"]),

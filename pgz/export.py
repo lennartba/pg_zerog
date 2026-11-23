@@ -144,8 +144,8 @@ def textured_ply_to_obj(ply: Path) -> Path:
     return obj
 
 
-def export(obj_path: Path, T, scan, work: Path, cfg: dict, stl: Path | None) -> Path:
-    out = work / "deliver" / scan.name
+def export(obj_path: Path, T, scan, work: Path, cfg: dict, stl: Path | None, suffix: str = "") -> Path:
+    out = work / "deliver" / (f"{scan.name}_{suffix}" if suffix else scan.name)
     out.mkdir(parents=True, exist_ok=True)
     if obj_path.suffix.lower() == ".ply":
         obj_path = textured_ply_to_obj(obj_path)
