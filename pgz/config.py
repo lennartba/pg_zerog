@@ -25,6 +25,16 @@ DEFAULTS: dict = {
         "max_image_size": 3200,  # feature extraction only; dense/texture use full res
         "max_num_features": 16000,
         "clahe_clip": 4.0,  # contrast boost of the feature-only images
+        # Plain base coat gives few verified matches per pair (~40); COLMAP's default
+        # 30-inlier registration threshold then rejects almost every image.
+        "mapper": {
+            "abs_pose_min_num_inliers": 12,
+            "abs_pose_min_inlier_ratio": 0.1,
+            "init_min_num_inliers": 40,
+            "init_min_tri_angle": 4,
+            "min_model_size": 5,
+            "ba_refine_principal_point": 0,
+        },
         "neighbors": 30,  # matching pairs from the scanner's pose prior
         "max_angle_deg": 40.0,
     },

@@ -92,7 +92,7 @@ def run_colmap(scan: Scan, work: Path, cfg: dict) -> Path:
              "--database_path", db, "--image_path", work / "images_feat",
              "--output_path", sparse,
              "--Mapper.num_threads", threads,
-             "--Mapper.ba_refine_principal_point", "1",
+             *[a for k, v in s["mapper"].items() for a in (f"--Mapper.{k}", str(v))],
              ], logs / "colmap_mapper.log")
 
     # choose the model with the most registered images, export as text
