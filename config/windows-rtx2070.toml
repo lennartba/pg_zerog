@@ -10,7 +10,8 @@ max_image_size = 3200
 max_num_features = 16000
 
 [dense]
-resolution_level = 0
+# dense cloud is only used for alignment and the holder occluder -> half resolution is enough
+resolution_level = 1
 max_resolution = 4200
 number_views = 8
 
