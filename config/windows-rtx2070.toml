@@ -17,3 +17,6 @@ number_views = 8
 [mesh]
 refine = true
 refine_resolution_level = 0
+
+[texture]
+max_faces = 1_200_000  # 32 GB RAM

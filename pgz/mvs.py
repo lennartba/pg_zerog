@@ -62,8 +62,23 @@ def refine(dense_scene: Path, mesh_in: Path, cfg: dict) -> Path:
     return out
 
 
+def ply_face_count(path: Path) -> int:
+    with open(path, "rb") as fh:
+        for raw in fh:
+            line = raw.decode("ascii", "replace").strip()
+            if line.startswith("element face"):
+                return int(line.split()[2])
+            if line == "end_header":
+                break
+    raise ValueError(f"no face element in {path}")
+
+
 def texture(dense_scene: Path, mesh_in: Path, cfg: dict) -> Path:
     t = cfg["texture"]
+    # TextureMesh memory grows with faces x views (2.35 M faces, 179 views > 12 GB).
+    # Texture detail comes from the images, not the mesh density.
+    faces = ply_face_count(mesh_in)
+    decimate = min(1.0, t["max_faces"] / faces) if t["max_faces"] else 1.0
     out_dir = dense_scene.parent / "textured"
     out_dir.mkdir(exist_ok=True)
     out = out_dir / "model.obj"
@@ -80,7 +95,7 @@ def texture(dense_scene: Path, mesh_in: Path, cfg: dict) -> Path:
              "--max-texture-size", str(t["max_texture_size"]),
              "--empty-color", str(t["empty_color"]),
              "--close-holes", "0",
-             "--decimate", "1",
+             "--decimate", f"{decimate:.4f}",
              "--ignore-mask-label", "0",
              *_common(cfg, dense_scene.parent)],
             dense_scene.parent.parent / "logs" / "mvs_texture.log")

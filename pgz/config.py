@@ -69,6 +69,9 @@ DEFAULTS: dict = {
         "outlier_threshold": 0.06,
         "max_texture_size": 8192,
         "empty_color": 0,
+        # faces kept for texturing (quadric decimation keeps edges); 0 = no limit.
+        # 600k ~ 0.08 mm edge length on a 30 mm prop and fits in 15 GB RAM.
+        "max_faces": 600_000,
     },
     "report": {
         "texel_target_um": 20.0,
