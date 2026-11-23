@@ -24,13 +24,13 @@ The old route is still available with `mesh.source = "scan"`.
 | Step | Tool | What happens |
 | --- | --- | --- |
 | prepare | Python | Link images, foreground masks (black background), contrast-enhanced copies for SIFT only (red base coat: ~150 → ~2,000 features/image) |
-| sfm | COLMAP | SIFT, matching only angular neighbours from the scanner's `path.json`, mapping with one shared camera and relaxed registration thresholds, then leftover images registered and bundle-adjusted (ef01: 196/200) |
+| sfm | COLMAP | SIFT, matching only angular neighbours from the scanner's `path.json`, mapping with one shared camera and relaxed registration thresholds, global SfM (view-graph calibration + global positioning), then leftover images registered and bundle-adjusted (ef01: 194/200, 0.9 px) |
 | undistort | Python/OpenCV | Undistort to **PNG** (COLMAP's undistorter would re-encode JPEG), OpenMVS masks |
 | dense, mesh | OpenMVS | Dense cloud and mesh (only for alignment and the holder occluder) |
 | crop / align | Python | Similarity alignment to the STL: prop found by base-coat colour → PCA → trimmed ICP (rigid, then scaled with bidirectional correspondences). **Independent check**: STL outline ray-cast into every photo vs the photo's object outline (ef01: median 15 µm) |
-| texture | Python/Open3D | UV atlas (UVAtlas, ef01: 29 charts), every texel projected into every view, visibility by ray casting STL + holder, blend in linear light with the best view dominating, chart padding. No sharpening, no colour leveling |
+| texture | Python/Open3D | UV atlas (UVAtlas, ef01: 28 charts), every texel projected into every view, visibility by ray casting STL + holder, blend in linear light with the best view dominating, chart padding. No sharpening, no colour leveling |
 | export | Python | `model.obj/.mtl` in STL mm, PNG texture, STL copy |
-| report | Python | Texel size and density, coverage, alignment, edge spread (texture vs photos), `report.md`, `preview.jpg` |
+| report | Python | Texel size and density, coverage, alignment, edge spread (texture rendered back into photos, same edges measured in both), `report.md`, `preview.jpg` |
 
 Finished steps are skipped on re-run (delete a step's output to redo it).
 
@@ -71,15 +71,17 @@ Measured on the sample scan with the current defaults; see the report in the wor
 
 | | OpenMVS on scan mesh | OpenMVS on STL | own baking on STL |
 | --- | --- | --- | --- |
-| UV islands / patches | tens of thousands | 19,314 | 29 charts |
-| Textured surface (excl. holder side) | 63 % | 100 % | ~100 % (putty contact excluded) |
+| UV islands / patches | tens of thousands | 19,314 | 28 charts |
+| Textured surface (excl. holder side) | 63 % | 100 % | 96.9 % (rest: putty contact) |
 | Alignment check (outline vs photo) | – | – | median 15 µm |
-| Edge spread, label text | – | – | texture ~52 µm vs photos ~45 µm |
+| Edge spread, same edges in photo and re-rendered texture | – | – | texture 72 µm vs photos 60 µm (WARN: target 30, minimum 75) |
 
 ## Known limits
 
 - Source images are JPEG q90 with 4:2:0 chroma subsampling (OpenScan firmware): colour edges have half
-  resolution. The photos resolve ~45 µm edges; that is the ceiling for the texture.
+  resolution. On ef01 the interior edges in the photos are ~60 µm wide; that is the ceiling for the texture.
+  The bake adds ~20 %; finer texels (10 µm) or a harder best-view selection did not reduce it, so the
+  rest is most likely view-to-view registration (SfM reprojection ~0.9 px ≈ 12 µm).
 - Prop segmentation for the first alignment uses the base-coat colour (`[segment]`, default: red).
 - Edge spread is measured on the strongest texture edges (label, shading) – a proxy until a scan with
   painted highlights exists.
