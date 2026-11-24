@@ -75,6 +75,7 @@ Measured on the sample scan with the current defaults; see the report in the wor
 | UV islands / patches | tens of thousands | 19,314 | 22 charts |
 | Textured surface (excl. holder side) | 63 % | 100 % | 94.8 % (rest: putty contact, narrow gaps between cubes) |
 | Alignment check (outline vs photo) | – | – | median 15 µm |
+| Texture registration, 8 held-out photos (excl. holder side) | – | – | median 29 µm, p90 65 µm (PASS, target ≤ 50 µm) |
 | Print vs STL (fitted deformation) | – | – | RMS 0.18 mm, max 0.56 mm (cube tops −0.45 mm); side-view check of cube tops after fit: −21 µm (before: −505 µm) |
 | Edge spread, same edges in photo and re-rendered texture | – | – | texture 66 µm vs photos 59 µm (WARN: target 30, minimum 75) |
 

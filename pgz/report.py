@@ -224,8 +224,10 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
          _status(t["texel_um_median"], r["texel_target_um"], r["texel_min_um"])),
         ("Even texel density", f"{100 * t['density_within_tol']:.0f} % of area within ±{100 * r['density_tolerance']:.0f} %",
          "≥ 90 %", "—", _status(t["density_within_tol"], 0.9, None, False)),
-        ("Untextured surface", f"{100 * t['untextured_area_frac']:.1f} %", "0 %", "—",
-         _status(t["untextured_area_frac"], 0.005, 0.02)),
+        (("Untextured surface incl. holder side (requirement: see row excl. holder side)",
+          f"{100 * t['untextured_area_frac']:.1f} %", "—", "—", "INFO") if source == "stl" else
+         ("Untextured surface", f"{100 * t['untextured_area_frac']:.1f} %", "0 %", "—",
+          _status(t["untextured_area_frac"], 0.005, 0.02))),
     ]
     sil_path = work / "silhouette.json"
     if stl and sil_path.exists() and json.loads(sil_path.read_text())["after"]["views"] > 0:
