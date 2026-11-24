@@ -76,6 +76,19 @@ DEFAULTS: dict = {
         # the measurement floor (~1 px = 15 µm) and refining did not improve it -> 0.
         "iterations": 0,
     },
+    # non-rigid fit of the STL to the photographed surface before projecting (see deform.py).
+    # Prints deviate from their STL; projecting onto the undeformed STL ghosts and darkens edges.
+    "deform": {
+        "enabled": True,
+        "lattice_mm": 1.0,      # node spacing of the displacement field
+        "smooth": 0.1,          # Laplacian weight (per active node, data ~1); ef01: 1.0 under-fits, 0.02 adds noise
+        "damping": 1e-4,
+        "huber_mm": 0.3,        # robust weight beyond this residual (must exceed the expected print deviation)
+        "iterations": 4,
+        "max_dist_mm": 1.0,     # dense points farther from the STL are ignored (holder, noise)
+        "samples": 300000,
+        "max_points": 400000,
+    },
     "align": {
         "fine_candidates": 6,
     },

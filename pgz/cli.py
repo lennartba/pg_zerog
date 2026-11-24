@@ -73,6 +73,10 @@ def cmd_run(args) -> int:
             if cfg["silhouette"]["enabled"]:
                 from . import silhouette
                 tf = silhouette.measure_and_refine(dense_dir, stl, tf, work, cfg)
+        lattice = None
+        if stl and cfg["deform"]["enabled"]:
+            from . import deform
+            lattice = deform.fit(mvs_dir / "scene_dense.ply", stl, tf, work, cfg)
         if source == "stl":
             mesh_in = align.stl_to_scan_frame(stl, tf, mvs_dir / "stl_in_scan.ply",
                                               cfg["mesh"]["stl_max_edge_mm"])
@@ -87,7 +91,7 @@ def cmd_run(args) -> int:
     if step("texture"):
         if baked:
             from . import bake
-            obj = bake.bake(dense_dir, stl, tf, raw_mesh, mvs_dir / "baked", cfg)
+            obj = bake.bake(dense_dir, stl, tf, raw_mesh, mvs_dir / "baked", cfg, lattice)
         else:
             obj = mvs.texture(dense_scene, mesh_in, cfg, name=f"textured_{source}")
     if step("export"):

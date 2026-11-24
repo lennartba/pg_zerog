@@ -113,8 +113,12 @@ def holder_mesh(raw_mesh: Path, stl_mesh: trimesh.Trimesh, T: np.ndarray, tol_mm
     return np.asarray(m.vertices), np.asarray(m.faces)[keep]
 
 
-def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: Path, cfg: dict) -> Path:
-    """Write out_dir/model.obj (+ .mtl, texture PNG) in STL millimetres."""
+def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: Path, cfg: dict,
+         lattice=None) -> Path:
+    """Write out_dir/model.obj (+ .mtl, texture PNG) in STL millimetres.
+
+    lattice: deformation STL -> photographed surface (deform.py). Texels are projected from
+    their deformed position, the output keeps the original STL and its UVs."""
     b = cfg["bake"]
     out_dir.mkdir(parents=True, exist_ok=True)
     obj_path = out_dir / "model.obj"
@@ -126,14 +130,24 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
     pix, P, Nrm = rasterize(stl_mesh, uv, size)
     log.info("  %d texels on the prop (%.1f%% of the atlas)", len(pix), 100 * len(pix) / size**2)
 
-    # ray-casting scene in the scan frame: STL + holder occluders
+    # surface the photos actually show: the STL deformed onto the print (fine remesh so the
+    # deformation is not flattened by big CAD triangles)
+    if lattice is not None:
+        rv, rf = trimesh.remesh.subdivide_to_size(stl_mesh.vertices, stl_mesh.faces,
+                                                  max_edge=cfg["mesh"]["stl_max_edge_mm"])
+        real = trimesh.Trimesh(lattice(rv), rf, process=False)
+        P = lattice(P)
+    else:
+        real = stl_mesh
+
+    # ray-casting scene in the scan frame: real surface + holder occluders
     S = np.linalg.inv(T)
     k = scale_of(T)  # mm per scan unit
     scene = o3d.t.geometry.RaycastingScene()
-    scene.add_triangles(o3d.core.Tensor(apply(S, np.asarray(stl_mesh.vertices)).astype(np.float32)),
-                        o3d.core.Tensor(np.asarray(stl_mesh.faces).astype(np.uint32)))
+    scene.add_triangles(o3d.core.Tensor(apply(S, np.asarray(real.vertices)).astype(np.float32)),
+                        o3d.core.Tensor(np.asarray(real.faces).astype(np.uint32)))
     if raw_mesh is not None and raw_mesh.exists():
-        hv, hf = holder_mesh(raw_mesh, stl_mesh, T, cfg["mesh"]["crop_tolerance_mm"])
+        hv, hf = holder_mesh(raw_mesh, real, T, cfg["mesh"]["crop_tolerance_mm"])
         if len(hf):
             scene.add_triangles(o3d.core.Tensor(hv.astype(np.float32)), o3d.core.Tensor(hf.astype(np.uint32)))
             log.info("  holder occluder: %d faces from the scan mesh", len(hf))

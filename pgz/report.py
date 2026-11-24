@@ -185,6 +185,9 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
     if stl and T is not None and (dense / "sparse" / "images.txt").exists():
         from .align import scale_of
         from .views import load_views
+        if (work / "deform.npz").exists():  # render the surface the photos show
+            from .deform import Lattice
+            obj.v = Lattice.load(work / "deform.npz")(obj.v)
         res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), load_views(dense),
                                                              scale_of(T))}
     else:
@@ -213,10 +216,22 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         ]
     if source == "stl" and "align" in res:
         al = res["align"]
+        dj = work / "deform.json"
+        if dj.exists():
+            de = json.loads(dj.read_text())
+            rows.append(("Print vs STL: fitted deformation along the normal (excl. holder side); "
+                         "texture is projected from the deformed surface",
+                         f"RMS {de['deviation_rms_mm']:.3f} mm (p95 {de['deviation_p95_mm']:.3f}, "
+                         f"max {de['deviation_max_mm']:.3f}); fit residual {de['residual_after_median_um']:.0f} µm",
+                         f"≤ {r['rms_target_mm']:.2f} mm", f"≤ {r['rms_reject_mm']:.2f} mm",
+                         _status(de["deviation_rms_mm"], r["rms_target_mm"], r["rms_reject_mm"])))
+            res["deform"] = de
+        else:
+            rows.append(("Dense prop points vs STL (no deformation fit)", f"RMS {al['prop_points_rms_mm']:.3f} mm "
+                         f"(p95 {al['prop_points_p95_mm']:.3f})", f"≤ {r['rms_target_mm']:.2f} mm",
+                         f"≤ {r['rms_reject_mm']:.2f} mm",
+                         _status(al["prop_points_rms_mm"], r["rms_target_mm"], r["rms_reject_mm"])))
         rows += [
-            ("Dense prop points vs STL (info)", f"RMS {al['prop_points_rms_mm']:.3f} mm "
-             f"(p95 {al['prop_points_p95_mm']:.3f}); mostly dense-cloud noise",
-             "—", "—", "INFO"),
             ("Textured STL surface (excl. holder side)", f"{100 * t['textured_excl_holder']:.1f} %",
              f"≥ {100 * r['coverage_target']:.0f} %", f"≥ {100 * r['coverage_reject']:.0f} %",
              _status(t["textured_excl_holder"], r["coverage_target"], r["coverage_reject"], False)),
