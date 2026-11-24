@@ -188,14 +188,23 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
         # ray length -> z depth
         dirs = rays.numpy()[..., 3:]
         dmap = hit * (dirs @ v.R[2])  # z = t * (d . optical axis) (R[2] = camera z axis in world)
-        dmap = np.where(np.isfinite(dmap), dmap, np.inf)
+        dmap = np.where(np.isfinite(dmap), dmap, np.inf).astype(np.float32)
+        # occluding contours (outline vs background, one part in front of another): the photo
+        # blends both sides there over a few px (lens blur, focus stacking), ef01: black
+        # background darkened cube edges seen from behind. Samples close to a depth jump
+        # get a low weight, so edges come from views where the edge is a crease, not an outline.
+        far = np.where(np.isfinite(dmap), dmap, 1e6)
+        k3 = np.ones((3, 3), np.uint8)
+        jump = (cv2.dilate(far, k3) - cv2.erode(far, k3)) > b["contour_jump_mm"] / k
+        cdist = cv2.distanceTransform((~jump).astype(np.uint8), cv2.DIST_L2, 3) / ds  # full-res px
         # conservative: nearest surface in a 3x3 neighbourhood (occlusion edges)
-        dmap = -cv2.dilate(-dmap.astype(np.float32), np.ones((3, 3), np.uint8))
+        dmap = -cv2.dilate(-dmap, k3)
         ci = np.nonzero(cand)[0]
         u2 = np.clip((uvp[ci, 0] * ds).astype(int), 0, w2 - 1)
         v2 = np.clip((uvp[ci, 1] * ds).astype(int), 0, h2 - 1)
         vis = z[ci] <= dmap[v2, u2] + tol
-        ci = ci[vis]
+        ci, u2, v2 = ci[vis], u2[vis], v2[vis]
+        cw = np.clip(cdist[v2, u2] / b["contour_margin_px"], 1e-3, 1.0)
         if len(ci) == 0:
             continue
         img = cv2.imread(str(v.image), cv2.IMREAD_COLOR)
@@ -206,11 +215,11 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
         if mask is not None:
             mk = _sample(mask, mx, my, cv2.INTER_NEAREST)
             okm = mk > 0
-            ci, mx, my = ci[okm], mx[okm], my[okm]
+            ci, mx, my, cw = ci[okm], mx[okm], my[okm], cw[okm]
         col = _sample(img, mx, my, cv2.INTER_LINEAR)
         lin = _srgb_to_linear(col[:, ::-1])
         footprint = (v.K[0, 0] / z[ci])  # px per scan unit: higher = finer
-        w = (cosang[ci] ** b["angle_power"]) * (footprint ** b["resolution_power"])
+        w = (cosang[ci] ** b["angle_power"]) * (footprint ** b["resolution_power"]) * cw
         w = w.astype(np.float64)
         # keep numbers in range: normalise against a running per-texel max
         newmax = np.maximum(wmax[ci], w)

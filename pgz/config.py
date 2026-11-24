@@ -110,6 +110,10 @@ DEFAULTS: dict = {
         "sharpness_power": 8.0,
         "depth_scale": 0.5,  # occlusion depth maps at half resolution
         "depth_tol_mm": 0.05,
+        # samples within this many px of an occluding contour get a lower weight (linear ramp);
+        # contour = depth jump larger than contour_jump_mm between neighbouring depth-map pixels
+        "contour_margin_px": 8,
+        "contour_jump_mm": 0.3,
     },
     "texture": {
         "resolution_level": 0,  # always full-res images for texture
