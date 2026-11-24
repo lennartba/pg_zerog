@@ -78,6 +78,26 @@ Measured on the sample scan with the current defaults; see the report in the wor
 | Print vs STL (fitted deformation) | – | – | RMS 0.18 mm, max 0.56 mm (cube tops −0.45 mm); side-view check of cube tops after fit: −21 µm (before: −505 µm) |
 | Edge spread, same edges in photo and re-rendered texture | – | – | texture 66 µm vs photos 59 µm (WARN: target 30, minimum 75) |
 
+## Robustness against print deformation
+
+`tools/deform_test.py` applies synthetic defects to the STL (the real ef01 print already deviates by
+~0.5 mm at the cube tops), runs fit + bake with 8 held-out views, and measures registration by rendering
+the texture into the held-out photos (patch-wise phase correlation, median / p90 in µm on the surface):
+
+| Case | Plate top | Sides | Cube tops | Fitted shape vs real-STL fit |
+| --- | --- | --- | --- | --- |
+| no fit (texture on the plain STL) | 23 / 42 | 20 / 36 | 127 / 175 (3 of ~100 patches correlate) | – |
+| fit, real STL | 28 / 63 | 22 / 47 | 26 / 61 | – |
+| STL sheared x += 0.08·z | 34 / 84 | 25 / 58 | 40 / 70 | 49 / 106 |
+| STL y × 1.03 | 29 / 62 | 26 / 47 | 29 / 57 | 21 / 49 |
+| STL z × 1.06 (total z error ~1 mm) | 29 / 65 | 33 / 66 | 32 / 111 | 19 / 94 |
+| 0.4 mm local bump | 32 / 68 | 20 / 50 | 26 / 58 | 8 / 51 |
+
+Reading: the fit fixes the cube tops (127 -> 26 µm) at a small cost on the flat plate top (p90 42 -> 63 µm,
+mostly next to the cube bases where a smooth field cannot follow a 0.5 mm step exactly). Scale errors,
+a 1 mm height error and local bumps are recovered to the level of the plain fit. Shear is the weakest
+case: tangential shifts of flat tops are only constrained by the side faces. Run time ~13 min per case.
+
 ## Known limits
 
 - The outline alignment check (median 15 µm) is dominated by the plate outline and did not reveal the

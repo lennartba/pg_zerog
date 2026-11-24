@@ -153,6 +153,20 @@ def _edge_row(res, t, r):
             _status(um, tgt, mn))
 
 
+def _registration_row(res):
+    reg = res.get("registration")
+    if reg and "median_um" in reg:
+        return ("Texture-on-mesh registration: texture rendered into held-out photos, patch-wise shift "
+                "(excl. holder side)",
+                f"median {reg['median_um']:.0f} µm (p90 {reg['p90_um']:.0f}; {100 * reg['frac_over_50um']:.0f} % "
+                f"> 50 µm) over {reg['patches']} patches in {reg['views']} views",
+                "≤ 0.05 mm", "—", _status(reg["median_um"] / 1000, 0.05, None))
+    if "silhouette" in res and res.get("mesh_source") == "stl":
+        return ("Texture-on-mesh registration (inferred, no held-out views)",
+                f"≈ outline alignment {res['silhouette']['median_um']:.0f} µm", "≤ 0.05 mm", "—", "NOT MEASURED")
+    return ("Texture-on-mesh registration", "—", "≤ 0.05 mm", "—", "NOT MEASURED")
+
+
 def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T,
                  source: str = "scan") -> dict:
     r = cfg["report"]
@@ -188,8 +202,17 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         if (work / "deform.npz").exists():  # render the surface the photos show
             from .deform import Lattice
             obj.v = Lattice.load(work / "deform.npz")(obj.v)
-        res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), load_views(dense),
-                                                             scale_of(T))}
+        views = load_views(dense)
+        res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), views, scale_of(T))}
+        bj = work / "mvs" / "baked" / "bake.json"
+        held = json.loads(bj.read_text()).get("holdout_views", []) if bj.exists() else []
+        if source == "stl" and held:
+            # texture rendered into photos that were not used for baking, patch-wise shift
+            from .registration import texture_registration
+            reg = texture_registration(obj, timg, np.linalg.inv(T), [v for v in views if v.name in held],
+                                       scale_of(T), holder_normal=r["holder_normal"])
+            reg.pop("per_view", None)
+            res["registration"] = reg
     else:
         res["edge_spread"] = {"texture": edge_spread(timg, timg.max(2) > 0)}
 
@@ -256,13 +279,10 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
          else "FAIL"),
         ("Sharpening / delighting / colour leveling", "none applied", "none", "—", "PASS"),
         _edge_row(res, t, r),
-        (("Texture-on-mesh registration", "projected onto the STL: = alignment above "
-          f"({res['silhouette']['median_um']:.0f} µm) + SfM reprojection", "≤ 0.05 mm", "—",
-          _status(res['silhouette']['median_um'] / 1000, 0.05, None))
-         if source == "stl" and "silhouette" in res else
-         ("Texture-on-mesh registration", "—", "≤ 0.05 mm", "—", "NOT MEASURED")),
+        _registration_row(res),
         ("Colour vs checker ΔE", "—", "≤ 3", "—", "OUT OF SCOPE (prototype)"),
     ]
+    (out_dir / "report.json").write_text(json.dumps(res, indent=2))
     md = [f"# Scan report {scan.name}", "",
           f"Mesh: {'aligned STL, textured' if source == 'stl' else 'photogrammetry mesh'}. "
           f"pgz {__version__}; COLMAP {res['tools'].get('colmap', '?')}; OpenMVS {res['tools'].get('openmvs', '?')}; "
