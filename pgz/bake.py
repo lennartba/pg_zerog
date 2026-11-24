@@ -150,7 +150,7 @@ def build_scene(stl_mesh, P, T, raw_mesh, cfg, lattice=None, edges=None):
     return scene, P, k
 
 
-def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
+def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None, shade=None):
     """Colour of surface points X (scan frame, normals Nrm) blended over the views, linear light.
     Xc: where to sample the colour if not at X (rounded print edges, edges.py; Nrm is then the
     normal there); visibility is always tested at X, which lies on the ray-cast surface.
@@ -189,10 +189,16 @@ def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
         # sample is only as good as the worst surface around it -> weight by the smallest cosine
         # within the window (background = 0). Views seeing both faces alike win at edges.
         cwin = int(round(b["blur_window_px"] * ds))
-        if cwin > 0:
+        if cwin > 0 or shade is not None:
             cmap = -np.einsum("ijk,ijk->ij", ans["primitive_normals"].numpy(), dirs / np.linalg.norm(dirs, axis=2, keepdims=True))
             cmap = np.where(np.isfinite(hit), np.clip(cmap, 0, 1), 0).astype(np.float32)
+        if cwin > 0:
             cmin = cv2.erode(cmap, np.ones((2 * cwin + 1, 2 * cwin + 1), np.uint8))
+        if shade is not None:
+            # brightness the model expects in this photo, blurred like the photo: near an edge a
+            # pixel mixes both faces (and background = 0), so the point's own angle is not enough
+            from .shading import f_of
+            fmap = cv2.GaussianBlur(f_of(shade, cmap).astype(np.float32), (0, 0), b["shading_psf_px"] * ds)
         dmap = hit * (dirs @ v.R[2])  # z = t * (d . optical axis) (R[2] = camera z axis in world)
         dmap = np.where(np.isfinite(dmap), dmap, np.inf).astype(np.float32)
         # occluding contours (outline vs background, one part in front of another): the photo
@@ -229,14 +235,19 @@ def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
             mk = _sample(mask, mx, my, cv2.INTER_NEAREST)
             okm = mk > 0
             ci, mx, my, cw, cpx, cosw = ci[okm], mx[okm], my[okm], cw[okm], cpx[okm], cosw[okm]
+            u2, v2 = u2[okm], v2[okm]
         col = _sample(img, mx, my, cv2.INTER_LINEAR)
         lin = _srgb_to_linear(col[:, ::-1])
+        if shade is not None:  # view-angle brightness normalisation (shading.py)
+            fexp = shade["gain"].get(v.name, 1.0) * np.maximum(fmap[v2, u2], b["shading_min_f"])
+            lin = lin / fexp[:, None]
         footprint = (v.K[0, 0] / z[ci])  # px per scan unit: higher = finer
         w = (cosang[ci] ** b["angle_power"]) * (footprint ** b["resolution_power"]) * cw
         w = w.astype(np.float64)
         if trace is not None:
             trace.append({"view": v.name, "idx": ci.copy(), "w": w.copy(), "rgb": col[:, ::-1].copy(),
                           "contour_px": cpx.copy(), "cos": cosang[ci].copy(), "cos_win": cosw.copy(),
+                          "f_exp": (fexp.copy() if shade is not None else None),
                           "footprint": footprint.copy(), "uv": np.c_[mx, my]})
         # keep numbers in range: normalise against a running per-texel max
         newmax = np.maximum(wmax[ci], w)
@@ -305,7 +316,21 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
     # normals into the scan frame: rotation part of S (a similarity rotates, it does not keep normals)
     Rs = S[:3, :3] / scale_of(S)
     Nrm = Nrm @ Rs.T
-    acc, wsum, nviews = blend_points(X, Nrm, views, scene, k, b, Xc=Xc)
+    shade = None
+    if b["shading_normalise"]:
+        # fit brightness vs view angle (+ per-photo exposure) on a texel subset, then blend
+        # every sample at its head-on brightness (shading.py)
+        from . import shading
+        sub = np.random.default_rng(0).choice(len(X), min(len(X), b["shading_samples"]), replace=False)
+        tr = []
+        blend_points(X[sub], Nrm[sub], views, scene, k, b, tr, Xc=Xc[sub])
+        shade = shading.fit(tr, b["min_cos"])
+        shading.save(shade, out_dir / "shading.json")
+        del tr
+        log.info("  view-angle normalisation: f(cos 0.5) = %.2f, f(0.75) = %.2f; per-point spread %.0f%% -> %.0f%%",
+                 np.interp(0.5, shade["cos"], shade["f"]), np.interp(0.75, shade["cos"], shade["f"]),
+                 100 * shade["spread_before_mad"], 100 * shade["residual_mad"])
+    acc, wsum, nviews = blend_points(X, Nrm, views, scene, k, b, Xc=Xc, shade=shade)
 
     tex_lin = np.zeros((size * size, 3), np.float32)
     have = wsum > 0

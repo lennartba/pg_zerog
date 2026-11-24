@@ -118,6 +118,13 @@ DEFAULTS: dict = {
         # weight uses the smallest view cosine within this radius (background = 0), so at edges
         # views that see both faces alike win over views that see one face at a grazing angle
         "blur_window_px": 6,
+        # OpenScan lights move with the camera: oblique views are darker (ef01: brightness ~ cos).
+        # Fitted per scan (shading.py) and divided out per sample, so every view contributes its
+        # head-on brightness. Only the view-angle term; shadows, occlusion, paint stay.
+        "shading_normalise": True,
+        "shading_samples": 100000,
+        "shading_psf_px": 2.0,  # photo blur (Gaussian sigma, full-res px) for the expected brightness
+        "shading_min_f": 0.15,  # never divide by less (noise, background-dominated pixels)
         # fixed fillet radius for texels next to sharp convex STL edges, used only when the edge
         # fit from photo outlines is disabled ([edges] enabled = false). 0 = sample the sharp corner
         "edge_radius_mm": 0.0,
