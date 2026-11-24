@@ -80,12 +80,12 @@ DEFAULTS: dict = {
     # Prints deviate from their STL; projecting onto the undeformed STL ghosts and darkens edges.
     "deform": {
         "enabled": True,
-        "lattice_mm": 1.0,      # node spacing of the displacement field
+        # coarse to fine: (lattice spacing mm, capture radius mm) per stage
+        "stages": [[4.0, 3.0], [2.0, 1.5], [1.0, 0.8]],
         "smooth": 0.1,          # Laplacian weight (per active node, data ~1); ef01: 1.0 under-fits, 0.02 adds noise
         "damping": 1e-4,
-        "huber_mm": 0.3,        # robust weight beyond this residual (must exceed the expected print deviation)
-        "iterations": 4,
-        "max_dist_mm": 1.0,     # dense points farther from the STL are ignored (holder, noise)
+        "huber_mm": 0.3,        # robust weight beyond this residual
+        "iterations": 3,        # per stage
         "samples": 300000,
         "max_points": 400000,
     },
@@ -93,6 +93,7 @@ DEFAULTS: dict = {
         "fine_candidates": 6,
     },
     "bake": {
+        "holdout_stride": 24,   # every n-th view is left out of the texture and used to check it (0 = off)
         # own texturing of the STL (mesh.source = "stl"); OpenMVS TextureMesh otherwise
         "enabled": True,
         "texel_um": 15.0,  # ~ image sampling (15 µm/px on ef01); requirement <= 20

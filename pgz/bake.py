@@ -161,6 +161,10 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
     wmax = np.zeros(len(pix), np.float64)
     nviews = np.zeros(len(pix), np.int32)
     views = load_views(dense)
+    # held-out views: not used for the texture, so the report can check registration honestly
+    hs = int(b.get("holdout_stride", 0))
+    holdout = [v.name for v in views[hs // 2::hs]] if hs > 0 else []
+    views = [v for v in views if v.name not in holdout]
     ds = b["depth_scale"]
     tol = b["depth_tol_mm"] / k
 
@@ -259,6 +263,7 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
     stats = {
         "atlas": size, "texels": int(len(pix)), "covered_frac": float(have.mean()),
         "views_per_texel_median": float(np.median(nviews[have])) if have.any() else 0.0,
+        "holdout_views": holdout,
     }
     (out_dir / "bake.json").write_text(json.dumps(stats, indent=2))
     log.info("  baked: %.1f%% of texels covered, median %d views per texel",

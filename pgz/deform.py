@@ -81,8 +81,44 @@ class Lattice:
         return cls(z["lo"], float(z["h"]), tuple(z["shape"]), z["U"])
 
 
+def _stage(lat: Lattice, X, smp, nrm, Ws, d, max_dist, iterations, U0=None):
+    """Fit lat.U to the points X (point-to-plane against the deformed samples)."""
+    L = lat.laplacian()
+    Lb = sp.block_diag([L, L, L]).tocsr()
+    nn = lat.U.shape[0]
+    if U0 is not None:
+        lat.U = U0
+    active = max(1, int((np.asarray(Ws.sum(0)).ravel() > 0).sum()))
+    for _ in range(iterations):
+        Q = smp + Ws @ lat.U
+        dq, jq = cKDTree(Q).query(X, distance_upper_bound=max_dist)
+        ok = np.isfinite(dq)
+        Xo, jq = X[ok], jq[ok]
+        r = np.einsum("ij,ij->i", Xo - Q[jq], nrm[jq])
+        hub = d["huber_mm"]
+        w = np.where(np.abs(r) <= hub, 1.0, hub / np.maximum(np.abs(r), 1e-9)) * (active / max(1, len(Xo)))
+        # rows: n . (W_s[j] U) = n . (X - s_j)   (total displacement)
+        Wj = Ws[jq]
+        target = np.einsum("ij,ij->i", Xo - smp[jq], nrm[jq])
+        A = sp.hstack([Wj.multiply(nrm[jq, c][:, None]) for c in range(3)]).tocsr()
+        M = A.T @ sp.diags(w) @ A + d["smooth"] * (Lb.T @ Lb) + d["damping"] * sp.eye(3 * nn)
+        lat.U = spsolve(M.tocsc(), A.T @ (w * target)).reshape(3, nn).T
+    return lat
+
+
+def _residuals(lat, X, smp, nrm, Ws, max_dist):
+    Q = smp + Ws @ lat.U
+    dq, jq = cKDTree(Q).query(X, distance_upper_bound=max_dist)
+    ok = np.isfinite(dq)
+    return np.einsum("ij,ij->i", X[ok] - Q[jq[ok]], nrm[jq[ok]])
+
+
 def fit(dense_ply: Path, stl: Path, T: np.ndarray, work: Path, cfg: dict) -> Lattice:
-    """Fit the lattice (STL frame, mm); writes work/deform.npz and work/deform.json."""
+    """Fit the lattice (STL frame, mm); writes work/deform.npz and work/deform.json.
+
+    Coarse to fine: each stage has its own lattice spacing and capture radius; the field
+    of a stage starts from the previous one. Large deviations are caught by the coarse
+    stages, local ones by the fine stage."""
     out = work / "deform.npz"
     if out.exists():
         return Lattice.load(out)
@@ -95,51 +131,32 @@ def fit(dense_ply: Path, stl: Path, T: np.ndarray, work: Path, cfg: dict) -> Lat
     smp, fi = trimesh.sample.sample_surface_even(m, d["samples"], seed=3)
     smp = np.asarray(smp)
     nrm = m.face_normals[fi]
-    tree = cKDTree(smp)
-    dist, j = tree.query(X, distance_upper_bound=d["max_dist_mm"])
+    capture = max(st[1] for st in d["stages"])
+    dist, j = cKDTree(smp).query(X, distance_upper_bound=capture)
     keep = np.isfinite(dist)
     keep[keep] &= nrm[j[keep]] @ hn < 0.5  # no holder-side (putty) points
     X = X[keep]
     if len(X) > d["max_points"]:
         X = X[np.random.default_rng(0).choice(len(X), d["max_points"], replace=False)]
-    log.info("  deform: %d dense points within %.1f mm of the STL", len(X), d["max_dist_mm"])
+    log.info("  deform: %d dense points within %.1f mm of the STL", len(X), capture)
 
-    lo = m.bounds[0] - 2 * d["lattice_mm"]
-    shape = tuple(np.ceil((m.bounds[1] + 2 * d["lattice_mm"] - lo) / d["lattice_mm"]).astype(int) + 1)
-    lat = Lattice(lo, d["lattice_mm"], shape)
-    Ws = lat.weights(smp)  # sample -> nodes
-    L = lat.laplacian()
-    nn = lat.U.shape[0]
-    # per-node data normalisation: ~1 per active node, so `smooth` is resolution independent
-    active = max(1, int((np.asarray(Ws.sum(0)).ravel() > 0).sum()))
-    wdata = active / len(X)
-
-    def residuals(U):
-        Q = smp + Ws @ U
-        dq, jq = cKDTree(Q).query(X)
-        r = np.einsum("ij,ij->i", X - Q[jq], nrm[jq])
-        return jq, r
-
-    r0 = None
-    for it in range(d["iterations"]):
-        jq, r = residuals(lat.U)
-        if r0 is None:
-            r0 = r
-        hub = d["huber_mm"]
-        w = np.where(np.abs(r) <= hub, 1.0, hub / np.maximum(np.abs(r), 1e-9)) * wdata
-        # rows: n_i . (W_s[j_i] U) = n_i . (X_i - s_j)   (total displacement, not increment)
-        Wj = Ws[jq]
-        target = np.einsum("ij,ij->i", X - smp[jq], nrm[jq])
-        A = sp.hstack([Wj.multiply(nrm[jq, c][:, None]) for c in range(3)]).tocsr()
-        Dw = sp.diags(w)
-        Lb = sp.block_diag([L, L, L]).tocsr()
-        M = A.T @ Dw @ A + d["smooth"] * (Lb.T @ Lb) + d["damping"] * sp.eye(3 * nn)
-        rhs = A.T @ (w * target)
-        u = spsolve(M.tocsc(), rhs)
-        lat.U = u.reshape(3, nn).T
-        log.info("  deform iteration %d: robust residual median |r| %.0f µm", it + 1,
-                 1000 * np.median(np.abs(residuals(lat.U)[1])))
-    _, r1 = residuals(lat.U)
+    r0 = _residuals(Lattice(np.zeros(3), 1.0, (2, 2, 2)), X, smp, nrm,
+                    sp.csr_matrix((len(smp), 8)), d["stages"][-1][1])
+    lat = None
+    for spacing, max_dist in d["stages"]:
+        lo = m.bounds[0] - 2 * spacing
+        shape = tuple(np.ceil((m.bounds[1] + 2 * spacing - lo) / spacing).astype(int) + 1)
+        new = Lattice(lo, spacing, shape)
+        U0 = None
+        if lat is not None:  # start from the previous field, sampled at the new nodes
+            idx = np.indices(shape).reshape(3, -1).T
+            U0 = lat.displacement(lo + idx * spacing)
+        Ws = new.weights(smp)
+        lat = _stage(new, X, smp, nrm, Ws, d, max_dist, d["iterations"], U0)
+        r = _residuals(lat, X, smp, nrm, Ws, max_dist)
+        log.info("  deform stage %.1f mm lattice, capture %.1f mm: median |r| %.0f µm on %d points",
+                 spacing, max_dist, 1000 * np.median(np.abs(r)), len(r))
+    r1 = _residuals(lat, X, smp, nrm, Ws, d["stages"][-1][1])
 
     disp = Ws @ lat.U
     vis = nrm @ hn < 0.5
@@ -147,7 +164,7 @@ def fit(dense_ply: Path, stl: Path, T: np.ndarray, work: Path, cfg: dict) -> Lat
     mag = np.linalg.norm(disp[vis], axis=1)
     stats = {
         "points": int(len(X)),
-        "lattice_mm": d["lattice_mm"],
+        "stages": d["stages"],
         "residual_before_median_um": float(1000 * np.median(np.abs(r0))),
         "residual_after_median_um": float(1000 * np.median(np.abs(r1))),
         "deviation_rms_mm": float(np.sqrt(np.mean(dn ** 2))),
