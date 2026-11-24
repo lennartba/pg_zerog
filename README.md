@@ -121,6 +121,19 @@ photo 147 | 149-151 | 129; sharp sampling 159 | 120 | 144; now 160 | 134-138 | 1
 Edges that are never an outline against the background (concave edges, edges only seen against the
 prop itself) use the scan-wide radius without displacement.
 
+## View-angle normalisation (`bake.shading_normalise`, on by default; prototype)
+
+OpenScan's light moves with the camera, so a surface seen at an angle is also lit at that angle. Fitted
+per scan from ~100k surface points (`shading.py`): brightness = albedo x per-photo factor x f(cos), with
+f(cos) close to cos (Lambert, light at the camera; ef01: f(0.5) = 0.54, f(0.75) = 0.81). Every sample is
+divided by the brightness the model expects for that pixel (f over the photo blur, background 0), so
+each view contributes its head-on brightness. The spread of one surface point across views drops from
+22 % to 12 %. Shadows, occlusion and paint stay; only the view-angle term is removed. Effects on ef01:
+edge bands within -12..+5 % of the neighbouring faces; faces of different orientation closer together;
+side faces in narrow gaps (only seen obliquely) up to 30 % brighter; shading of geometric detail
+(engraved text) weaker. This touches the "no delighting" requirement: it removes view-dependent
+lighting, not baked-in shading. Off: `shading_normalise = false`.
+
 ## Known limits
 
 - The outline alignment check (median 15 µm) is dominated by the plate outline and did not reveal the
