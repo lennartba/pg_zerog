@@ -113,18 +113,27 @@ def holder_mesh(raw_mesh: Path, stl_mesh: trimesh.Trimesh, T: np.ndarray, tol_mm
     return np.asarray(m.vertices), np.asarray(m.faces)[keep]
 
 
-def build_scene(stl_mesh, P, T, raw_mesh, cfg, lattice=None):
+def build_scene(stl_mesh, P, T, raw_mesh, cfg, lattice=None, edges=None):
     """Ray-casting scene (scan frame) of the surface the photos show + holder occluders.
+    edges: (radius, dA, dB, fade) per sharp convex edge segment -> the STL's edges are replaced
+    by the measured ones first (edges.corrected_mesh).
     Returns (scene, P moved onto the real surface, mm per scan unit)."""
     # surface the photos actually show: the STL deformed onto the print (fine remesh so the
     # deformation is not flattened by big CAD triangles)
-    if lattice is not None:
+    if edges is not None:
+        from .edges import corrected_mesh
+        radius, dA, dB, fade = edges
+        real = corrected_mesh(stl_mesh, cfg["mesh"]["stl_max_edge_mm"], radius, dA, dB, fade,
+                              cfg["bake"]["edge_min_angle_deg"])
+        rv, rf = real.vertices, real.faces
+    else:
         rv, rf = trimesh.remesh.subdivide_to_size(stl_mesh.vertices, stl_mesh.faces,
                                                   max_edge=cfg["mesh"]["stl_max_edge_mm"])
+    if lattice is not None:
         real = trimesh.Trimesh(lattice(rv), rf, process=False)
         P = lattice(P)
     else:
-        real = stl_mesh
+        real = trimesh.Trimesh(rv, rf, process=False)
 
     # ray-casting scene in the scan frame: real surface + holder occluders
     S = np.linalg.inv(T)
@@ -171,9 +180,19 @@ def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
         K2[:2] *= ds
         rays = o3d.t.geometry.RaycastingScene.create_rays_pinhole(
             o3d.core.Tensor(K2), o3d.core.Tensor(v.extrinsic()), w2, h2)
-        hit = scene.cast_rays(rays)["t_hit"].numpy()
+        ans = scene.cast_rays(rays)
+        hit = ans["t_hit"].numpy()
         # ray length -> z depth
         dirs = rays.numpy()[..., 3:]
+        # blur footprint: a photo pixel mixes everything within a few px. Near a crease the other
+        # face is often seen at a grazing angle (dark), near an outline there is background: the
+        # sample is only as good as the worst surface around it -> weight by the smallest cosine
+        # within the window (background = 0). Views seeing both faces alike win at edges.
+        cwin = int(round(b["blur_window_px"] * ds))
+        if cwin > 0:
+            cmap = -np.einsum("ijk,ijk->ij", ans["primitive_normals"].numpy(), dirs / np.linalg.norm(dirs, axis=2, keepdims=True))
+            cmap = np.where(np.isfinite(hit), np.clip(cmap, 0, 1), 0).astype(np.float32)
+            cmin = cv2.erode(cmap, np.ones((2 * cwin + 1, 2 * cwin + 1), np.uint8))
         dmap = hit * (dirs @ v.R[2])  # z = t * (d . optical axis) (R[2] = camera z axis in world)
         dmap = np.where(np.isfinite(dmap), dmap, np.inf).astype(np.float32)
         # occluding contours (outline vs background, one part in front of another): the photo
@@ -193,6 +212,11 @@ def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
         ci, u2, v2 = ci[vis], u2[vis], v2[vis]
         cpx = cdist[v2, u2]
         cw = np.clip(cpx / b["contour_margin_px"], 1e-3, 1.0)
+        if cwin > 0:  # replace the own cosine by the worst one in the blur window
+            cosw = np.maximum(cmin[v2, u2], 1e-3)
+            cw = cw * np.minimum(cosw / np.maximum(cosang[ci], 1e-3), 1.0) ** b["angle_power"]
+        else:
+            cosw = cosang[ci]
         if len(ci) == 0:
             continue
         img = cv2.imread(str(v.image), cv2.IMREAD_COLOR)
@@ -204,7 +228,7 @@ def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
         if mask is not None:
             mk = _sample(mask, mx, my, cv2.INTER_NEAREST)
             okm = mk > 0
-            ci, mx, my, cw, cpx = ci[okm], mx[okm], my[okm], cw[okm], cpx[okm]
+            ci, mx, my, cw, cpx, cosw = ci[okm], mx[okm], my[okm], cw[okm], cpx[okm], cosw[okm]
         col = _sample(img, mx, my, cv2.INTER_LINEAR)
         lin = _srgb_to_linear(col[:, ::-1])
         footprint = (v.K[0, 0] / z[ci])  # px per scan unit: higher = finer
@@ -212,7 +236,7 @@ def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
         w = w.astype(np.float64)
         if trace is not None:
             trace.append({"view": v.name, "idx": ci.copy(), "w": w.copy(), "rgb": col[:, ::-1].copy(),
-                          "contour_px": cpx.copy(), "cos": cosang[ci].copy(),
+                          "contour_px": cpx.copy(), "cos": cosang[ci].copy(), "cos_win": cosw.copy(),
                           "footprint": footprint.copy(), "uv": np.c_[mx, my]})
         # keep numbers in range: normalise against a running per-texel max
         newmax = np.maximum(wmax[ci], w)
@@ -247,24 +271,40 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
     pix, P, Nrm = rasterize(stl_mesh, uv, size)
     log.info("  %d texels on the prop (%.1f%% of the atlas)", len(pix), 100 * len(pix) / size**2)
 
-    # rounded print edges: texels next to sharp convex STL edges sample a fillet (edges.py)
-    from .edges import fillet_remap
-    Pc, Nrm, on_fillet = fillet_remap(P, Nrm, stl_mesh, b["edge_radius_mm"], b["edge_min_angle_deg"])
-    log.info("  %.1f%% of texels sample a %.2f mm edge fillet", 100 * on_fillet.mean(), b["edge_radius_mm"])
+    P0 = P.copy()
     scene, P, k = build_scene(stl_mesh, P, T, raw_mesh, cfg, lattice)
-    if lattice is not None:
-        Pc = lattice(Pc)
-    S = np.linalg.inv(T)
-    X = apply(S, P)  # texel points, scan frame
-    Xc = apply(S, Pc)  # where their colour is sampled
-    # normals into the scan frame: rotation part of S (a similarity rotates, it does not keep normals)
-    Rs = S[:3, :3] / scale_of(S)
-    Nrm = Nrm @ Rs.T
     views = load_views(dense)
     # held-out views: not used for the texture, so the report can check registration honestly
     hs = int(b.get("holdout_stride", 0))
     holdout = [v.name for v in views[hs // 2::hs]] if hs > 0 else []
     views = [v for v in views if v.name not in holdout]
+    # printed edges are not where/how the STL has them (rounded, shifted by up to ~0.1 mm):
+    # measured from the photo outlines (edgefit.py); texels near sharp convex edges sample the
+    # real edge (edges.py). Geometry and UVs of the output stay the STL's.
+    e = cfg["edges"]
+    if e["enabled"]:
+        from . import edgefit
+        ef = edgefit.fit(stl, lattice, T, views, scene, out_dir, cfg)
+        sg = ef["segments"]
+        radius, dA, dB = np.asarray(sg["radius_mm"]), np.asarray(sg["dA_mm"]), np.asarray(sg["dB_mm"])
+    else:
+        radius, dA, dB = b["edge_radius_mm"], None, None
+    from .edges import fillet_remap
+    Pc, Nrm, on_edge = fillet_remap(P0, Nrm, stl_mesh, radius, b["edge_min_angle_deg"], dA=dA, dB=dB,
+                                    fade=e["fade_mm"])
+    log.info("  %.1f%% of texels sample the measured edge geometry", 100 * on_edge.mean())
+    if e["enabled"]:
+        # ray-cast the measured edges too: visibility and outline distance where the print has them
+        scene, Pc, k = build_scene(stl_mesh, Pc, T, raw_mesh, cfg, lattice, (radius, dA, dB, e["fade_mm"]))
+        P = Pc
+    elif lattice is not None:
+        Pc = lattice(Pc)
+    S = np.linalg.inv(T)
+    X = apply(S, P)  # texel points for the visibility test, scan frame
+    Xc = apply(S, Pc)  # where their colour is sampled
+    # normals into the scan frame: rotation part of S (a similarity rotates, it does not keep normals)
+    Rs = S[:3, :3] / scale_of(S)
+    Nrm = Nrm @ Rs.T
     acc, wsum, nviews = blend_points(X, Nrm, views, scene, k, b, Xc=Xc)
 
     tex_lin = np.zeros((size * size, 3), np.float32)

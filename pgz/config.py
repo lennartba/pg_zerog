@@ -114,11 +114,32 @@ DEFAULTS: dict = {
         # contour = depth jump larger than contour_jump_mm between neighbouring depth-map pixels
         "contour_margin_px": 8,
         "contour_jump_mm": 0.3,
-        # printed convex edges are rounded, CAD edges are sharp: texels within the fillet strip
-        # sample the photos on a fillet of this radius (edges.py). ef01: dark line on every edge
-        # with sharp sampling; profiles flat from ~0.2 mm, 0.25 chosen. 0 = off
-        "edge_radius_mm": 0.25,
+        # a photo pixel mixes its surroundings (lens blur, focus stacking; ef01 edges ~4 px): the
+        # weight uses the smallest view cosine within this radius (background = 0), so at edges
+        # views that see both faces alike win over views that see one face at a grazing angle
+        "blur_window_px": 6,
+        # fixed fillet radius for texels next to sharp convex STL edges, used only when the edge
+        # fit from photo outlines is disabled ([edges] enabled = false). 0 = sample the sharp corner
+        "edge_radius_mm": 0.0,
         "edge_min_angle_deg": 30.0,
+    },
+    # print edges measured from photo outlines (edgefit.py): radius + position per edge line
+    "edges": {
+        "enabled": True,
+        "sample_step_mm": 0.25,  # along each edge
+        "end_margin_mm": 0.4,  # stay away from the prop's corners
+        "profile_px": 14,  # outline profile half length
+        "along_px": 4,  # averaged +- px along the edge
+        "background_probe_mm": 0.4,  # beyond the outline: must be background
+        "min_contrast": 40.0,  # prop vs background (red channel)
+        "min_views": 5,  # per edge line
+        "sigma_mm": 0.015,  # outline measurement noise (ef01: 6-17 µm rms per line)
+        # priors: poorly observed lines stay near the scan-wide radius and the deformed STL
+        "prior_radius_sd_mm": 0.05,
+        "prior_offset_sd_mm": 0.15,
+        "min_radius_mm": 0.03,  # never treat an edge as perfectly sharp (sampling a knife edge)
+        "fallback_radius_mm": 0.1,  # no edge measurable at all
+        "fade_mm": 0.5,  # face offsets measured at an edge fade out over this distance
     },
     "texture": {
         "resolution_level": 0,  # always full-res images for texture
