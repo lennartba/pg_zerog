@@ -114,6 +114,11 @@ DEFAULTS: dict = {
         # contour = depth jump larger than contour_jump_mm between neighbouring depth-map pixels
         "contour_margin_px": 8,
         "contour_jump_mm": 0.3,
+        # printed convex edges are rounded, CAD edges are sharp: texels within the fillet strip
+        # sample the photos on a fillet of this radius (edges.py). ef01: dark line on every edge
+        # with sharp sampling; profiles flat from ~0.2 mm, 0.25 chosen. 0 = off
+        "edge_radius_mm": 0.25,
+        "edge_min_angle_deg": 30.0,
     },
     "texture": {
         "resolution_level": 0,  # always full-res images for texture

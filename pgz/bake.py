@@ -113,23 +113,9 @@ def holder_mesh(raw_mesh: Path, stl_mesh: trimesh.Trimesh, T: np.ndarray, tol_mm
     return np.asarray(m.vertices), np.asarray(m.faces)[keep]
 
 
-def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: Path, cfg: dict,
-         lattice=None) -> Path:
-    """Write out_dir/model.obj (+ .mtl, texture PNG) in STL millimetres.
-
-    lattice: deformation STL -> photographed surface (deform.py). Texels are projected from
-    their deformed position, the output keeps the original STL and its UVs."""
-    b = cfg["bake"]
-    out_dir.mkdir(parents=True, exist_ok=True)
-    obj_path = out_dir / "model.obj"
-    if obj_path.exists():
-        return obj_path
-
-    stl_mesh = trimesh.load(stl, force="mesh")
-    uv, size = uv_atlas(stl_mesh, cfg)
-    pix, P, Nrm = rasterize(stl_mesh, uv, size)
-    log.info("  %d texels on the prop (%.1f%% of the atlas)", len(pix), 100 * len(pix) / size**2)
-
+def build_scene(stl_mesh, P, T, raw_mesh, cfg, lattice=None):
+    """Ray-casting scene (scan frame) of the surface the photos show + holder occluders.
+    Returns (scene, P moved onto the real surface, mm per scan unit)."""
     # surface the photos actually show: the STL deformed onto the print (fine remesh so the
     # deformation is not flattened by big CAD triangles)
     if lattice is not None:
@@ -152,25 +138,26 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
             scene.add_triangles(o3d.core.Tensor(hv.astype(np.float32)), o3d.core.Tensor(hf.astype(np.uint32)))
             log.info("  holder occluder: %d faces from the scan mesh", len(hf))
 
-    X = apply(S, P)  # texel points, scan frame
-    # normals into the scan frame: rotation part of S (a similarity rotates, it does not keep normals)
-    Rs = S[:3, :3] / scale_of(S)
-    Nrm = Nrm @ Rs.T
-    acc = np.zeros((len(pix), 3), np.float64)
-    wsum = np.zeros(len(pix), np.float64)
-    wmax = np.zeros(len(pix), np.float64)
-    nviews = np.zeros(len(pix), np.int32)
-    views = load_views(dense)
-    # held-out views: not used for the texture, so the report can check registration honestly
-    hs = int(b.get("holdout_stride", 0))
-    holdout = [v.name for v in views[hs // 2::hs]] if hs > 0 else []
-    views = [v for v in views if v.name not in holdout]
+    return scene, P, k
+
+
+def blend_points(X, Nrm, views, scene, k, b, trace=None, Xc=None):
+    """Colour of surface points X (scan frame, normals Nrm) blended over the views, linear light.
+    Xc: where to sample the colour if not at X (rounded print edges, edges.py; Nrm is then the
+    normal there); visibility is always tested at X, which lies on the ray-cast surface.
+    Returns (acc, wsum, nviews); colour = acc / wsum. trace: list -> per-sample records."""
+    if Xc is None:
+        Xc = X
+    acc = np.zeros((len(X), 3), np.float64)
+    wsum = np.zeros(len(X), np.float64)
+    wmax = np.zeros(len(X), np.float64)
+    nviews = np.zeros(len(X), np.int32)
     ds = b["depth_scale"]
     tol = b["depth_tol_mm"] / k
 
     for i, v in enumerate(views):
         C = v.center
-        to_cam = C[None] - X
+        to_cam = C[None] - Xc
         dist = np.linalg.norm(to_cam, axis=1)
         cosang = np.einsum("ij,ij->i", Nrm, to_cam / dist[:, None])
         uvp, z = v.project(X)
@@ -204,23 +191,29 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
         v2 = np.clip((uvp[ci, 1] * ds).astype(int), 0, h2 - 1)
         vis = z[ci] <= dmap[v2, u2] + tol
         ci, u2, v2 = ci[vis], u2[vis], v2[vis]
-        cw = np.clip(cdist[v2, u2] / b["contour_margin_px"], 1e-3, 1.0)
+        cpx = cdist[v2, u2]
+        cw = np.clip(cpx / b["contour_margin_px"], 1e-3, 1.0)
         if len(ci) == 0:
             continue
         img = cv2.imread(str(v.image), cv2.IMREAD_COLOR)
         mask = cv2.imread(str(v.image.with_suffix("")) + ".mask.png", cv2.IMREAD_GRAYSCALE)
         # COLMAP: pixel centre of the top-left pixel at (0.5, 0.5); OpenCV: at (0, 0)
-        mx = (uvp[ci, 0] - 0.5).astype(np.float32)
-        my = (uvp[ci, 1] - 0.5).astype(np.float32)
+        uvc = uvp[ci] if Xc is X else v.project(Xc[ci])[0]
+        mx = (uvc[:, 0] - 0.5).astype(np.float32)
+        my = (uvc[:, 1] - 0.5).astype(np.float32)
         if mask is not None:
             mk = _sample(mask, mx, my, cv2.INTER_NEAREST)
             okm = mk > 0
-            ci, mx, my, cw = ci[okm], mx[okm], my[okm], cw[okm]
+            ci, mx, my, cw, cpx = ci[okm], mx[okm], my[okm], cw[okm], cpx[okm]
         col = _sample(img, mx, my, cv2.INTER_LINEAR)
         lin = _srgb_to_linear(col[:, ::-1])
         footprint = (v.K[0, 0] / z[ci])  # px per scan unit: higher = finer
         w = (cosang[ci] ** b["angle_power"]) * (footprint ** b["resolution_power"]) * cw
         w = w.astype(np.float64)
+        if trace is not None:
+            trace.append({"view": v.name, "idx": ci.copy(), "w": w.copy(), "rgb": col[:, ::-1].copy(),
+                          "contour_px": cpx.copy(), "cos": cosang[ci].copy(),
+                          "footprint": footprint.copy(), "uv": np.c_[mx, my]})
         # keep numbers in range: normalise against a running per-texel max
         newmax = np.maximum(wmax[ci], w)
         rescale = np.where(wmax[ci] > 0, (wmax[ci] / newmax) ** b["sharpness_power"], 0)
@@ -233,6 +226,46 @@ def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: 
         nviews[ci] += 1
         if (i + 1) % 25 == 0:
             log.info("  baked %d/%d views", i + 1, len(views))
+
+    return acc, wsum, nviews
+
+
+def bake(dense: Path, stl: Path, T: np.ndarray, raw_mesh: Path | None, out_dir: Path, cfg: dict,
+         lattice=None) -> Path:
+    """Write out_dir/model.obj (+ .mtl, texture PNG) in STL millimetres.
+
+    lattice: deformation STL -> photographed surface (deform.py). Texels are projected from
+    their deformed position, the output keeps the original STL and its UVs."""
+    b = cfg["bake"]
+    out_dir.mkdir(parents=True, exist_ok=True)
+    obj_path = out_dir / "model.obj"
+    if obj_path.exists():
+        return obj_path
+
+    stl_mesh = trimesh.load(stl, force="mesh")
+    uv, size = uv_atlas(stl_mesh, cfg)
+    pix, P, Nrm = rasterize(stl_mesh, uv, size)
+    log.info("  %d texels on the prop (%.1f%% of the atlas)", len(pix), 100 * len(pix) / size**2)
+
+    # rounded print edges: texels next to sharp convex STL edges sample a fillet (edges.py)
+    from .edges import fillet_remap
+    Pc, Nrm, on_fillet = fillet_remap(P, Nrm, stl_mesh, b["edge_radius_mm"], b["edge_min_angle_deg"])
+    log.info("  %.1f%% of texels sample a %.2f mm edge fillet", 100 * on_fillet.mean(), b["edge_radius_mm"])
+    scene, P, k = build_scene(stl_mesh, P, T, raw_mesh, cfg, lattice)
+    if lattice is not None:
+        Pc = lattice(Pc)
+    S = np.linalg.inv(T)
+    X = apply(S, P)  # texel points, scan frame
+    Xc = apply(S, Pc)  # where their colour is sampled
+    # normals into the scan frame: rotation part of S (a similarity rotates, it does not keep normals)
+    Rs = S[:3, :3] / scale_of(S)
+    Nrm = Nrm @ Rs.T
+    views = load_views(dense)
+    # held-out views: not used for the texture, so the report can check registration honestly
+    hs = int(b.get("holdout_stride", 0))
+    holdout = [v.name for v in views[hs // 2::hs]] if hs > 0 else []
+    views = [v for v in views if v.name not in holdout]
+    acc, wsum, nviews = blend_points(X, Nrm, views, scene, k, b, Xc=Xc)
 
     tex_lin = np.zeros((size * size, 3), np.float32)
     have = wsum > 0
