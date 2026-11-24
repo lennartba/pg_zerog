@@ -99,6 +99,23 @@ mostly next to the cube bases where a smooth field cannot follow a 0.5 mm step e
 a 1 mm height error and local bumps are recovered to the level of the plain fit. Shear is the weakest
 case: tangential shifts of flat tops are only constrained by the side faces. Run time ~13 min per case.
 
+## Edges
+
+Printed convex edges are rounded, CAD edges are sharp. Sampling the photos at the sharp corner gave a
+dark line along every edge: texels within ~0.1-0.2 mm of the corner landed on the rounded edge at a grazing
+angle, on the darker other face, or (where the edge is the outline in a view) on the black background.
+Two measures (`bake.contour_margin_px`, `bake.edge_radius_mm`): samples near occluding contours get a low
+weight, and texels in the fillet strip sample a 0.25 mm fillet (point and normal) instead of the corner.
+ef01, left cube, texture red at 5 µm from the edge relative to 0.4 mm into the same face:
+
+| Edge / face | sharp sampling | + contour weight | + fillet |
+| --- | --- | --- | --- |
+| top-front / front | 0.44 | 0.74 | 0.90 |
+| top-back / back | 0.37 | 0.68 | 0.91 |
+| vertical / front | 0.54 | 0.83 | 1.13 |
+
+The remaining ~10 % is the rounded edge itself, which the photos show between the two faces' shading.
+
 ## Known limits
 
 - The outline alignment check (median 15 µm) is dominated by the plate outline and did not reveal the
