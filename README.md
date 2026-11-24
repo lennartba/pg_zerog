@@ -28,7 +28,8 @@ The old route is still available with `mesh.source = "scan"`.
 | undistort | Python/OpenCV | Undistort to **PNG** (COLMAP's undistorter would re-encode JPEG), OpenMVS masks |
 | dense, mesh | OpenMVS | Dense cloud and mesh (only for alignment and the holder occluder) |
 | crop / align | Python | Similarity alignment to the STL: prop found by base-coat colour → PCA → trimmed ICP (rigid, then scaled with bidirectional correspondences). **Independent check**: STL outline ray-cast into every photo vs the photo's object outline (ef01: median 15 µm) |
-| texture | Python/Open3D | UV atlas (UVAtlas, ef01: 28 charts), every texel projected into every view, visibility by ray casting STL + holder, blend in linear light with the best view dominating, chart padding. No sharpening, no colour leveling |
+| deform | Python/SciPy | Non-rigid fit of the STL to the photographed surface (dense cloud, smooth lattice, point-to-plane). Prints deviate from their STL (ef01: cube tops 0.5 mm lower, elephant foot); projecting onto the undeformed STL ghosts details and darkens corners. Output keeps the original STL |
+| texture | Python/Open3D | UV atlas (UVAtlas, ef01: 28 charts), every texel projected into every view **from its position on the deformed (real) surface**, visibility by ray casting STL + holder, blend in linear light with the best view dominating, chart padding. No sharpening, no colour leveling |
 | export | Python | `model.obj/.mtl` in STL mm, PNG texture, STL copy |
 | report | Python | Texel size and density, coverage, alignment, edge spread (texture rendered back into photos, same edges measured in both), `report.md`, `preview.jpg` |
 
@@ -71,17 +72,22 @@ Measured on the sample scan with the current defaults; see the report in the wor
 
 | | OpenMVS on scan mesh | OpenMVS on STL | own baking on STL |
 | --- | --- | --- | --- |
-| UV islands / patches | tens of thousands | 19,314 | 28 charts |
-| Textured surface (excl. holder side) | 63 % | 100 % | 96.9 % (rest: putty contact) |
+| UV islands / patches | tens of thousands | 19,314 | 22 charts |
+| Textured surface (excl. holder side) | 63 % | 100 % | 94.8 % (rest: putty contact, narrow gaps between cubes) |
 | Alignment check (outline vs photo) | – | – | median 15 µm |
-| Edge spread, same edges in photo and re-rendered texture | – | – | texture 72 µm vs photos 60 µm (WARN: target 30, minimum 75) |
+| Print vs STL (fitted deformation) | – | – | RMS 0.18 mm, max 0.56 mm (cube tops −0.45 mm); side-view check of cube tops after fit: −21 µm (before: −505 µm) |
+| Edge spread, same edges in photo and re-rendered texture | – | – | texture 66 µm vs photos 59 µm (WARN: target 30, minimum 75) |
 
 ## Known limits
 
+- The outline alignment check (median 15 µm) is dominated by the plate outline and did not reveal the
+  0.5 mm cube-top deviation; the print-vs-STL row (deformation fit) is the relevant number for that.
+- Surfaces no photo sees (putty contact, the bottom of the narrow gaps between cubes) stay black in
+  the texture.
+
 - Source images are JPEG q90 with 4:2:0 chroma subsampling (OpenScan firmware): colour edges have half
   resolution. On ef01 the interior edges in the photos are ~60 µm wide; that is the ceiling for the texture.
-  The bake adds ~20 %; finer texels (10 µm) or a harder best-view selection did not reduce it, so the
-  rest is most likely view-to-view registration (SfM reprojection ~0.9 px ≈ 12 µm).
+  The bake adds ~12 %. Most of the earlier loss came from projecting onto the undeformed STL.
 - Prop segmentation for the first alignment uses the base-coat colour (`[segment]`, default: red).
 - Edge spread is measured on the strongest texture edges (label, shading) – a proxy until a scan with
   painted highlights exists.
