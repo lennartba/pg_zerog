@@ -101,20 +101,25 @@ case: tangential shifts of flat tops are only constrained by the side faces. Run
 
 ## Edges
 
-Printed convex edges are rounded, CAD edges are sharp. Sampling the photos at the sharp corner gave a
-dark line along every edge: texels within ~0.1-0.2 mm of the corner landed on the rounded edge at a grazing
-angle, on the darker other face, or (where the edge is the outline in a view) on the black background.
-Two measures (`bake.contour_margin_px`, `bake.edge_radius_mm`): samples near occluding contours get a low
-weight, and texels in the fillet strip sample a 0.25 mm fillet (point and normal) instead of the corner.
-ef01, left cube, texture red at 5 µm from the edge relative to 0.4 mm into the same face:
+Printed edges are neither where nor how the STL has them. ef01, left cube: the edges sit 20-104 µm
+inside the deformed STL (the dense cloud cannot resolve this right at an edge) and are nearly sharp
+(radius at the 30 µm floor). Sampling the photos at the STL's corner gave dark lines along the edges.
+The bake now handles this from the data of every scan, no tuned constant:
 
-| Edge / face | sharp sampling | + contour weight | + fillet |
-| --- | --- | --- | --- |
-| top-front / front | 0.44 | 0.74 | 0.90 |
-| top-back / back | 0.37 | 0.68 | 0.91 |
-| vertical / front | 0.54 | 0.83 | 1.13 |
+1. `edgefit.py`: wherever a sharp convex STL edge is the outline of the prop in a photo, the outline
+   position is measured sub-pixel (50 % crossing prop/background). Per edge line a robust fit gives
+   radius and corner displacement (views from different angles separate the two; priors keep poorly
+   observed lines at the scan-wide values). ef01: 4,715 measurements, 8 edge lines, residual 6-17 µm.
+2. `edges.py`: texels next to sharp edges sample the measured edge (shifted, rounded); face offsets fade
+   out over 0.5 mm. The ray-casting surface carries the same correction (visibility, outlines).
+3. Blur window (`bake.blur_window_px` 6): a photo pixel mixes its surroundings, so the weight uses the
+   smallest view cosine within the window (background = 0). At an edge, views seeing both faces alike
+   win over views that see the other face at a grazing angle (dark) or the background.
 
-The remaining ~10 % is the rounded edge itself, which the photos show between the two faces' shading.
+Red across the top/back edge in view 141 (top face 0.4 mm | edge | back face 0.4 mm):
+photo 147 | 149-151 | 129; sharp sampling 159 | 120 | 144; now 160 | 134-138 | 144.
+Edges that are never an outline against the background (concave edges, edges only seen against the
+prop itself) use the scan-wide radius without displacement.
 
 ## Known limits
 

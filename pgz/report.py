@@ -35,18 +35,21 @@ def texel_stats(obj_path: Path, cfg: dict) -> dict:
     atex = 0.5 * np.abs(e1[:, 0] * e2[:, 1] - e1[:, 1] * e2[:, 0])
     ok &= (atex > 0) & (a3 > 0)
 
-    # faces OpenMVS could not texture get the empty colour (black)
-    cen = uv.mean(1)
-    untextured = np.zeros(len(a3), bool)
+    # untextured surface has the empty colour (black). Measured per face on 64 sample points
+    # (a face-centre test flips whole large CAD faces on one texel)
+    bc = np.random.default_rng(0).dirichlet([1, 1, 1], 64)
+    black = np.zeros(len(a3))
     for mi, name in enumerate(obj.materials):
         if name not in imgs:
             continue
         sel = obj.fmat == mi
         im = imgs[name]
         h, w = im.shape[:2]
-        x = np.clip((cen[sel, 0] * w).astype(int), 0, w - 1)
-        y = np.clip(((1 - cen[sel, 1]) * h).astype(int), 0, h - 1)
-        untextured[sel] = (im[y, x] == 0).all(1)
+        pu = np.einsum("pk,fkj->fpj", bc, uv[sel])
+        x = np.clip((pu[..., 0] * w).astype(int), 0, w - 1)
+        y = np.clip(((1 - pu[..., 1]) * h).astype(int), 0, h - 1)
+        black[sel] = (im[y, x] == 0).all(-1).mean(1)
+    untextured = black > 0.5  # for the texel-size statistics only
 
     size_um = np.full(len(a3), np.nan)
     size_um[ok] = 1000 * np.sqrt(a3[ok] / atex[ok])
@@ -68,12 +71,12 @@ def texel_stats(obj_path: Path, cfg: dict) -> dict:
         normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0]) / (2 * a3[:, None])
     vis = ~(normals @ hn > 0.9)
     return {
-        "textured_excl_holder": float(a3[vis & ~untextured].sum() / a3[vis].sum()),
+        "textured_excl_holder": float(1 - (a3 * black)[vis].sum() / a3[vis].sum()),
         "textures": {k: list(v) for k, v in sizes.items()},
         "texel_um_median": med, "texel_um_p10": q(0.1), "texel_um_p90": q(0.9),
         "density_within_tol": within,
         "atlas_utilisation": float(atex[ok].sum() / atlas) if atlas else 0.0,
-        "untextured_area_frac": float(a3[untextured].sum() / a3.sum()),
+        "untextured_area_frac": float((a3 * black).sum() / a3.sum()),
         "surface_mm2": float(a3.sum()),
     }
 
