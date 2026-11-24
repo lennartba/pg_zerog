@@ -69,7 +69,7 @@ def run_case(name, work, stl, out, cfg, base_surface=None):
     if lat is not None:
         obj.v = lat(obj.v)
     S, k = np.linalg.inv(T), scale_of(T)
-    reg = texture_registration(obj, tex, S, views, k)
+    reg = texture_registration(obj, tex, S, views, k, holder_normal=c["report"]["holder_normal"])
     es = matched_edge_spread(obj, tex, S, views, k, n_views=len(views))
     res = {"case": name, "minutes": round((time.time() - t0) / 60, 1),
            "registration_median_um": reg.get("median_um"), "registration_p90_um": reg.get("p90_um"),

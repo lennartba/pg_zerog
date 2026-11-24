@@ -19,9 +19,11 @@ def _highpass(lum: np.ndarray, sigma: float = 6.0) -> np.ndarray:
 
 
 def texture_registration(obj, tex_rgb: np.ndarray, S: np.ndarray, views, mm_per_unit: float,
-                         patch: int = 128, step: int = 96, min_response: float = 0.2) -> dict:
+                         patch: int = 128, step: int = 96, min_response: float = 0.2,
+                         holder_normal=None) -> dict:
     """obj in STL mm (already deformed to the real surface if a deformation exists),
-    S: STL -> scan frame, views: held-out views. Returns shift statistics in µm."""
+    S: STL -> scan frame, views: held-out views. Returns shift statistics in µm.
+    Patches on the holder side (normal . holder_normal > 0.5) are skipped, as for coverage."""
     import open3d as o3d
     from .align import apply
     from .sharpness import _lum, render_texture
@@ -33,6 +35,13 @@ def texture_registration(obj, tex_rgb: np.ndarray, S: np.ndarray, views, mm_per_
     for v in views:
         photo = cv2.imread(str(v.image))[:, :, ::-1]
         rend, hit, z = render_texture(scene, obj, tex_rgb, v)
+        if holder_normal is not None:
+            import open3d as o3d
+            rays = o3d.t.geometry.RaycastingScene.create_rays_pinhole(
+                o3d.core.Tensor(v.K), o3d.core.Tensor(v.extrinsic()), v.w, v.h)
+            nrm = scene.cast_rays(rays)["primitive_normals"].numpy()
+            Rs = S[:3, :3] / np.cbrt(np.linalg.det(S[:3, :3]))
+            hit &= ~(nrm @ (Rs @ np.asarray(holder_normal, float)) > 0.5)
         mask = cv2.imread(str(v.image.with_suffix("")) + ".mask.png", cv2.IMREAD_GRAYSCALE)
         ok = hit & ((mask > 0) if mask is not None else True)
         # patch must lie fully on the object (outline shifts are measured elsewhere)

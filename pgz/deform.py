@@ -12,7 +12,7 @@ land on the original STL's UVs.
 Deformation: a smooth displacement field on a regular lattice (trilinear), fitted to the
 dense cloud with point-to-plane residuals (the STL normal at the closest point),
 Laplacian smoothness, robust (Huber) weights, a few re-correspondence iterations.
-Holder-side points are ignored (putty).
+Holder-side points count only very close to the STL (the putty sticks out further).
 """
 from __future__ import annotations
 
@@ -102,7 +102,17 @@ def _stage(lat: Lattice, X, smp, nrm, Ws, d, max_dist, iterations, U0=None):
         target = np.einsum("ij,ij->i", Xo - smp[jq], nrm[jq])
         A = sp.hstack([Wj.multiply(nrm[jq, c][:, None]) for c in range(3)]).tocsr()
         M = A.T @ sp.diags(w) @ A + d["smooth"] * (Lb.T @ Lb) + d["damping"] * sp.eye(3 * nn)
-        lat.U = spsolve(M.tocsc(), A.T @ (w * target)).reshape(3, nn).T
+        rhs = A.T @ (w * target)
+        # weak point-to-point term: point-to-plane leaves sliding along the surface free, so
+        # smoothness would drag flat areas sideways (ef01: elephant foot moved the plate top
+        # ~60 µm). Closest-point offsets average out on flat areas and hold them in place.
+        pp = d["point_to_point"]
+        if pp > 0:
+            off = Xo - smp[jq]
+            P = Wj.T @ sp.diags(w) @ Wj
+            M = M + pp * sp.block_diag([P, P, P])
+            rhs = rhs + pp * np.concatenate([Wj.T @ (w * off[:, c]) for c in range(3)])
+        lat.U = spsolve(M.tocsc(), rhs).reshape(3, nn).T
     return lat
 
 
@@ -134,7 +144,11 @@ def fit(dense_ply: Path, stl: Path, T: np.ndarray, work: Path, cfg: dict) -> Lat
     capture = max(st[1] for st in d["stages"])
     dist, j = cKDTree(smp).query(X, distance_upper_bound=capture)
     keep = np.isfinite(dist)
-    keep[keep] &= nrm[j[keep]] @ hn < 0.5  # no holder-side (putty) points
+    # holder side: only points very close to the STL (label, bare plate bottom); the putty
+    # sticks out further. Without them the bottom has no data and drifts (ef01: 0.18 mm).
+    hold = np.zeros_like(keep)
+    hold[keep] = nrm[j[keep]] @ hn >= 0.5
+    keep &= ~hold | (dist <= d["holder_capture_mm"])
     X = X[keep]
     if len(X) > d["max_points"]:
         X = X[np.random.default_rng(0).choice(len(X), d["max_points"], replace=False)]
