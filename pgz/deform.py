@@ -144,11 +144,15 @@ def fit(dense_ply: Path, stl: Path, T: np.ndarray, work: Path, cfg: dict) -> Lat
     capture = max(st[1] for st in d["stages"])
     dist, j = cKDTree(smp).query(X, distance_upper_bound=capture)
     keep = np.isfinite(dist)
-    # holder side: only points very close to the STL (label, bare plate bottom); the putty
-    # sticks out further. Without them the bottom has no data and drifts (ef01: 0.18 mm).
+    # holder side: the putty sticks out of the surface, so points further OUT than
+    # holder_capture_mm are dropped; points INSIDE the STL are kept up to the normal capture
+    # radius (ef04: the printed plate is 0.42 mm thinner than the STL; an absolute limit dropped
+    # the whole bottom). Without them the bottom has no data and drifts (ef01: 0.18 mm).
     hold = np.zeros_like(keep)
     hold[keep] = nrm[j[keep]] @ hn >= 0.5
-    keep &= ~hold | (dist <= d["holder_capture_mm"])
+    out_dist = np.zeros(len(X))
+    out_dist[keep] = np.einsum("ij,ij->i", X[keep] - smp[j[keep]], nrm[j[keep]])
+    keep &= ~hold | (out_dist <= d["holder_capture_mm"])
     X = X[keep]
     if len(X) > d["max_points"]:
         X = X[np.random.default_rng(0).choice(len(X), d["max_points"], replace=False)]

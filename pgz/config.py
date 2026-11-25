@@ -86,7 +86,7 @@ DEFAULTS: dict = {
         "damping": 1e-4,
         "huber_mm": 0.3,        # robust weight beyond this residual
         "point_to_point": 0.2,
-        "holder_capture_mm": 0.3,  # holder-side points closer than this are used (label, bare bottom)  # weight of the closest-point term relative to point-to-plane
+        "holder_capture_mm": 0.3,  # holder side: points further OUT than this are putty and dropped (inside: normal capture)
         "iterations": 3,        # per stage
         "samples": 300000,
         "max_points": 400000,
