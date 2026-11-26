@@ -101,8 +101,11 @@ def render_texture(scene, obj, tex: np.ndarray, view, ds: float = 1.0):
 
 def matched_edge_spread(obj, tex_rgb: np.ndarray, S: np.ndarray, views, mm_per_unit: float,
                         n_views: int = 8, top_frac: float = 0.01, half: int = 8,
-                        min_contrast: float = 25.0, max_edges: int = 3000) -> dict:
-    """Same edges in photo and in the re-rendered texture. obj in STL mm, S: STL -> scan frame."""
+                        min_contrast: float = 25.0, max_edges: int = 3000, holder_normal=None,
+                        depth_jump_mm: float = 0.3) -> dict:
+    """Same edges in photo and in the re-rendered texture. obj in STL mm, S: STL -> scan frame.
+    Edges on the holder side (normal . holder_normal > 0.5) are skipped, as for coverage and
+    registration: there the label and putty, not the prop, give the strongest edges."""
     import open3d as o3d
     from .align import apply
     scene = o3d.t.geometry.RaycastingScene()
@@ -115,6 +118,18 @@ def matched_edge_spread(obj, tex_rgb: np.ndarray, S: np.ndarray, views, mm_per_u
         rend, valid, z = render_texture(scene, obj, tex_rgb, v)
         mask = cv2.imread(str(v.image.with_suffix("")) + ".mask.png", cv2.IMREAD_GRAYSCALE)
         ok = valid & ((mask > 0) if mask is not None else True)
+        if holder_normal is not None:
+            rays = o3d.t.geometry.RaycastingScene.create_rays_pinhole(
+                o3d.core.Tensor(v.K), o3d.core.Tensor(v.extrinsic()), v.w, v.h)
+            nrm = scene.cast_rays(rays)["primitive_normals"].numpy()
+            Rs = S[:3, :3] / np.cbrt(np.linalg.det(S[:3, :3]))
+            ok &= ~(nrm @ (Rs @ np.asarray(holder_normal, float)) > 0.5)
+        # texture edges only: not where the surface itself jumps in depth (occlusion edges are
+        # sharp in any render of the STL and say nothing about the texture)
+        zz = np.nan_to_num(z, nan=1e9).astype(np.float32)
+        ker = np.ones((3, 3), np.uint8)
+        jump = (cv2.dilate(zz, ker) - cv2.erode(zz, ker)) > depth_jump_mm / mm_per_unit
+        ok &= cv2.distanceTransform((~jump).astype(np.uint8), cv2.DIST_L2, 5) > 2 * half
         lp, lr = _lum(photo), _lum(rend)
         e = _edges(lp, ok, top_frac, half, max_edges)  # edges chosen in the photo, interior only
         if e is None:

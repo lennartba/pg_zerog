@@ -212,7 +212,9 @@ def fit(stl: Path, lattice, T, views, scene, work: Path, cfg) -> dict:
         cw = np.cumsum(np.asarray(ws)[o])
         rg = float(np.asarray(rs)[o][np.searchsorted(cw, cw[-1] / 2)])
     rg = max(rg, e["min_radius_mm"])
-    seg_r = np.full(nseg, rg)
+    # edges without own measurements: the scan-wide radius, unless fixed in the config
+    ru = e.get("unmeasured_radius_mm")
+    seg_r = np.full(nseg, rg if ru is None else float(ru))
     seg_dA = np.zeros(nseg)
     seg_dB = np.zeros(nseg)
     for li, rl in usable.items():

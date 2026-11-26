@@ -146,6 +146,7 @@ DEFAULTS: dict = {
         "prior_offset_sd_mm": 0.15,
         "min_radius_mm": 0.03,  # never treat an edge as perfectly sharp (sampling a knife edge)
         "fallback_radius_mm": 0.1,  # no edge measurable at all
+        "unmeasured_radius_mm": None,  # radius for edges without own measurements; None = scan-wide
         "fade_mm": 0.5,  # face offsets measured at an edge fade out over this distance
     },
     "texture": {
@@ -176,6 +177,7 @@ DEFAULTS: dict = {
         # STL faces whose normal points along this axis are the holder side and are
         # excluded from coverage (OpenScan holder sits on the bottom).
         "holder_normal": [0.0, 0.0, -1.0],
+        "edge_spread_min_edges": 300,  # fewer interior edges on the prop: NOT MEASURED (a plain base coat has little detail)
         "density_tolerance": 0.20,
     },
 }

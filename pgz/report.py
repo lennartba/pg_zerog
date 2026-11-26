@@ -141,10 +141,14 @@ def _edge_row(res, t, r):
     tgt = 1.5 * r["texel_target_um"]
     mn = 2.5 * r["texel_min_um"]
     m = e.get("matched")
-    if m and m.get("edges", 0) >= 20:
+    if m is not None and m.get("edges", 0) < r["edge_spread_min_edges"]:
+        return ("Edge spread: texture rendered into photos, same edges (excl. holder side)",
+                f"{m.get('edges', 0)} edges on the prop: too few (base coat without painted detail)",
+                f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm", "NOT MEASURED")
+    if m:
         um = m["texture_um"]
-        return (f"Edge spread: texture rendered into {m['views']} photos, same {m['edges']} interior edges "
-                "(proxy: no painted edges on a base scan)",
+        return (f"Edge spread: texture rendered into {m['views']} photos, same {m['edges']} interior edges, "
+                "excl. holder side (proxy: no painted edges on a base scan)",
                 f"{um:.0f} µm ({um / t['texel_um_median']:.1f} texels); photos {m['photo_um']:.0f} µm",
                 f"≤ {tgt:.0f} µm", f"≤ {mn:.0f} µm", _status(um, tgt, mn))
     et = e.get("texture", {})
@@ -206,7 +210,8 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
             from .deform import Lattice
             obj.v = Lattice.load(work / "deform.npz")(obj.v)
         views = load_views(dense)
-        res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), views, scale_of(T))}
+        res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), views, scale_of(T),
+                                                                   holder_normal=r["holder_normal"])}
         bj = work / "mvs" / "baked" / "bake.json"
         held = json.loads(bj.read_text()).get("holdout_views", []) if bj.exists() else []
         if source == "stl" and held:
