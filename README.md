@@ -75,9 +75,34 @@ Measured on the sample scan with the current defaults; see the report in the wor
 | UV islands / patches | tens of thousands | 19,314 | 22 charts |
 | Textured surface (excl. holder side) | 63 % | 100 % | 94.8 % (rest: putty contact, narrow gaps between cubes) |
 | Alignment check (outline vs photo) | – | – | median 15 µm |
-| Texture registration, 8 held-out photos (excl. holder side) | – | – | median 29 µm, p90 65 µm (PASS, target ≤ 50 µm) |
+| Texture registration, 8 held-out photos (excl. holder side) | – | – | median 15 µm, p90 30 µm (PASS, target ≤ 50 µm; measurement floor ~13–17 µm) |
 | Print vs STL (fitted deformation) | – | – | RMS 0.18 mm, max 0.56 mm (cube tops −0.45 mm); side-view check of cube tops after fit: −21 µm (before: −505 µm) |
-| Edge spread, same edges in photo and re-rendered texture | – | – | texture 66 µm vs photos 59 µm (WARN: target 30, minimum 75) |
+| Edge spread, same edges in photo and re-rendered texture | – | – | NOT MEASURED: excl. holder side and occlusion edges, a plain base coat leaves too few texture edges (earlier 66 vs 59 µm came mostly from the label) |
+
+## Batch: calibration props ef02–ef_h02
+
+Six props (red base coat, putty on a stick), container defaults, 200 views each, ~100–120 min per scan
+(4 CPUs). Registration recomputed with the subdivided render (see above).
+
+| Scan | Texel | Textured (excl. holder) | Outline alignment | Registration median / p90 | Print vs STL RMS (fit residual) | Edge radius (lines fitted) |
+| --- | --- | --- | --- | --- | --- | --- |
+| ef02 angles | 13.6 µm | 100 % | 15 µm | 20 / 41 µm | 0.136 mm (35 µm) | 30 µm (19) |
+| ef03 round | 15.0 µm | 99.3 % | 15 µm | 14 / 33 µm | 0.163 mm (30 µm) | – (0, default 100 µm) |
+| ef04 fins | 14.3 µm | 100 % | 14 µm | 13 / 30 µm | 0.095 mm (26 µm) | 55 µm (23) |
+| ef05 details | 14.1 µm | 99.7 % | 15 µm | 15 / 37 µm | 0.154 mm (32 µm) | 179 µm (11, hole rim) |
+| ef_h01 console | 15.2 µm | 100 % | 15 µm | 14 / 29 µm | 0.086 mm (26 µm) | 30 µm (6) |
+| ef_h02 tank | 14.4 µm | 99.9 % | 14 µm | 14 / 32 µm | 0.163 mm (18 µm) | – (0, default 100 µm) |
+
+Findings:
+- ef04: the printed plate is 0.42 mm thinner than the STL; the holder-side capture limit dropped the
+  whole bottom (fixed: the limit now applies outwards only, where the putty is).
+- Edge spread on base-coat props measured the paper label (holder side) and occlusion edges; both are
+  now excluded, which leaves too few texture edges -> NOT MEASURED. Needs a scan with painted detail.
+- ef_h02: the 2.3 mm max deviation is the putty around the leg ends, not the print.
+- Dark rings around raised features (ef03–ef05) are in the paint (spray shadow), visible in the photos.
+- A single edge line's radius is determined to ±25–70 µm; outlines against a far wall instead of the
+  background are not biased (ef04: +16 µm on average).
+- Peak disk use is ~25 GB per scan during DensifyPointCloud (depth maps), on top of ~4 GB kept per scan.
 
 ## Robustness against print deformation
 
@@ -93,6 +118,10 @@ the texture into the held-out photos (patch-wise phase correlation, median / p90
 | STL y × 1.03 | 29 / 62 | 26 / 47 | 29 / 57 | 21 / 49 |
 | STL z × 1.06 (total z error ~1 mm) | 29 / 65 | 33 / 66 | 32 / 111 | 19 / 94 |
 | 0.4 mm local bump | 32 / 68 | 20 / 50 | 26 / 58 | 8 / 51 |
+
+Note: these numbers were measured with the texture rendered on the STL deformed only at its CAD
+vertices; inside big faces the deformation was lost, which inflated the shifts (ef01: 29 -> 15 µm once
+the mesh is subdivided first, as the bake does). Relative comparisons stand; absolute values are high.
 
 Reading: the fit fixes the cube tops (127 -> 26 µm) at a small cost on the flat plate top (p90 42 -> 63 µm,
 mostly next to the cube bases where a smooth field cannot follow a 0.5 mm step exactly). Scale errors,

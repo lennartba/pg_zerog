@@ -30,6 +30,7 @@ from pgz.align import apply, scale_of  # noqa: E402
 from pgz.config import load_config  # noqa: E402
 from pgz.export import read_obj  # noqa: E402
 from pgz.registration import texture_registration  # noqa: E402
+from pgz.export import subdivide_obj  # noqa: E402
 from pgz.sharpness import matched_edge_spread  # noqa: E402
 from pgz.views import load_views  # noqa: E402
 
@@ -67,6 +68,7 @@ def run_case(name, work, stl, out, cfg, base_surface=None):
     obj = read_obj(obj_path)
     tex = cv2.imread(str(next(iter(obj.textures.values()))))[:, :, ::-1]
     if lat is not None:
+        obj = subdivide_obj(obj, c["mesh"]["stl_max_edge_mm"])  # deform inside big faces too
         obj.v = lat(obj.v)
     S, k = np.linalg.inv(T), scale_of(T)
     reg = texture_registration(obj, tex, S, views, k, holder_normal=c["report"]["holder_normal"])

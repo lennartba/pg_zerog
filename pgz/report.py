@@ -208,6 +208,10 @@ def write_report(out_dir: Path, scan, work: Path, cfg: dict, stl: Path | None, T
         from .views import load_views
         if (work / "deform.npz").exists():  # render the surface the photos show
             from .deform import Lattice
+            from .export import subdivide_obj
+            # fine remesh first, as in the bake: deforming only the corners of big CAD
+            # triangles flattens the deformation (ef02: registration 41 µm instead of 19)
+            obj = subdivide_obj(obj, cfg["mesh"]["stl_max_edge_mm"])
             obj.v = Lattice.load(work / "deform.npz")(obj.v)
         views = load_views(dense)
         res["edge_spread"] = {"matched": matched_edge_spread(obj, timg, np.linalg.inv(T), views, scale_of(T),

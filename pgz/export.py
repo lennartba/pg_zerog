@@ -61,6 +61,36 @@ def read_obj(path: Path) -> Obj:
     return obj
 
 
+
+def subdivide_obj(obj: Obj, max_edge: float) -> Obj:
+    """Every face split into n^2 triangles (n from its longest edge), positions and UVs together;
+    corners unwelded. Needed before a deformation is applied for rendering: moving only the
+    corners of big CAD triangles flattens the deformation inside them."""
+    p = obj.v[obj.fv]
+    t = obj.vt[obj.ft]
+    ln = np.linalg.norm(p - np.roll(p, 1, axis=1), axis=2).max(1)
+    nf = np.maximum(1, np.ceil(ln / max_edge).astype(int))
+    V, VT, M = [], [], []
+    for n in np.unique(nf):
+        sel = np.nonzero(nf == n)[0]
+        ij = [(i, j) for i in range(n + 1) for j in range(n + 1 - i)]
+        idx = {k: q for q, k in enumerate(ij)}
+        B = np.array([[1 - (i + j) / n, i / n, j / n] for i, j in ij])
+        tri = []
+        for i in range(n):
+            for j in range(n - i):
+                tri.append((idx[(i, j)], idx[(i + 1, j)], idx[(i, j + 1)]))
+                if j < n - i - 1:
+                    tri.append((idx[(i + 1, j)], idx[(i + 1, j + 1)], idx[(i, j + 1)]))
+        tri = np.array(tri).reshape(-1)
+        Bt = B[tri]  # (3k, 3)
+        V.append(np.einsum("kc,fcd->fkd", Bt, p[sel]).reshape(-1, 3))
+        VT.append(np.einsum("kc,fcd->fkd", Bt, t[sel]).reshape(-1, 2))
+        M.append(np.repeat(obj.fmat[sel], len(tri) // 3))
+    V, VT = np.concatenate(V), np.concatenate(VT)
+    k = np.arange(len(V)).reshape(-1, 3)
+    return Obj(V, VT, k, k.copy(), np.concatenate(M), obj.materials, obj.mtllib, obj.textures)
+
 def _transform_obj(src: Path, dst: Path, T: np.ndarray | None) -> None:
     R = None
     if T is not None:
