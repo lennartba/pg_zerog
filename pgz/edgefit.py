@@ -120,6 +120,7 @@ def measure(stl_mesh, lattice, T, views, scene, cfg) -> list[dict]:
         keep = vis & bg
         if not keep.any():
             continue
+        miss = ~np.isfinite(hit[n:])[keep]  # nothing behind the outline (not a far wall)
         cand, uv, z, ns = cand[keep], uv[keep], z[keep], ns[keep]
         # image directions: along the projected edge and outward (towards q_out)
         uv2, _ = v.project(apply(S, Pd[cand] + 0.1 * D[sg[cand]]))
@@ -150,7 +151,7 @@ def measure(stl_mesh, lattice, T, views, scene, cfg) -> list[dict]:
             s = sg[cand[j]]
             out.append({"view": v.name, "seg": int(s), "line": int(line[s]), "p": P[cand[j]].tolist(),
                         "ns": ns[j].tolist(), "delta_mm": float(-cross_px * mm_per_px),
-                        "g": float(_g(nA[s], nB[s], ns[j])), "contrast": float(lvl_in - lvl_out),
+                        "g": float(_g(nA[s], nB[s], ns[j])), "contrast": float(lvl_in - lvl_out), "bg_miss": bool(miss[j]),
                         "mm_per_px": float(mm_per_px)})
     return out
 
